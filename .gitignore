@@ -1,0 +1,17 @@
+# secrets
+.env
+backend/.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+backend/.venv/
+
+# node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# workspace media + renders (large, regenerable)
+workspace/
