@@ -16,6 +16,28 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   const [err, setErr] = useState("");
 
   const audioInput = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const cursorRef = useRef(0);
+  cursorRef.current = cursor;
+
+  // M3: the proxy video is a muted layer slaved to the waveform's audio clock.
+  // Scrub the timeline -> video seeks; play -> both run; light drift correction.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !proxyUrl) return;
+    const tol = playing ? 0.3 : 0.05;
+    if (Math.abs(v.currentTime - cursor) > tol) v.currentTime = cursor;
+  }, [cursor, playing, proxyUrl]);
+
+  const onPlaying = (p: boolean) => {
+    setPlaying(p);
+    const v = videoRef.current;
+    if (!v || !proxyUrl) return;
+    v.currentTime = cursorRef.current;
+    if (p) v.play().catch(() => {}); else v.pause();
+  };
+
   const reload = useCallbackRef((p?: Project) =>
     p ? Promise.resolve(setProject(p))
       : api.getProject(projectId).then(setProject).catch((e) => setErr(e.message)));
@@ -129,13 +151,15 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
           </div>
 
           <div className="viewport">
-            {proxyUrl ? <video src={proxyUrl} controls />
-              : <div className="empty">Render preview to see the cut. (Live proxy-sync is M3.)</div>}
+            <video ref={videoRef} src={proxyUrl ?? undefined} muted playsInline
+                   style={{ display: proxyUrl ? "block" : "none" }}
+                   onLoadedMetadata={(e) => { e.currentTarget.currentTime = cursorRef.current; }} />
+            {!proxyUrl && <div className="empty">Render preview, then scrub or play the timeline — the video follows the audio.</div>}
           </div>
 
           {audioAsset
             ? <Timeline project={project} pxPerSec={pxPerSec} onZoom={setPxPerSec} cursor={cursor} onCursor={setCursor}
-                        selectedBeatId={selectedBeat} onSelectBeat={setSelectedBeat} />
+                        onPlaying={onPlaying} selectedBeatId={selectedBeat} onSelectBeat={setSelectedBeat} />
             : <div className="bottom" style={{ padding: 20 }}><span className="muted">Upload audio to build the timeline.</span></div>}
         </div>
 

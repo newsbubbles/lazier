@@ -8,13 +8,14 @@ import type { Clip, Project } from "../lib/types";
 // units — one clip slot per speech chunk, reactive to the moment's words.
 // Clicking a chapter or a beat seeks the master audio there (scrub by section/beat).
 export function Timeline({
-  project, pxPerSec, onZoom, cursor, onCursor, selectedBeatId, onSelectBeat,
+  project, pxPerSec, onZoom, cursor, onCursor, onPlaying, selectedBeatId, onSelectBeat,
 }: {
   project: Project;
   pxPerSec: number;
   onZoom: (pps: number) => void;
   cursor: number;
   onCursor: (t: number) => void;
+  onPlaying?: (playing: boolean) => void;
   selectedBeatId: string | null;
   onSelectBeat: (bid: string) => void;
 }) {
@@ -49,9 +50,9 @@ export function Timeline({
     wsRef.current = ws;
     ws.on("audioprocess", (t: number) => onCursor(t));
     ws.on("seeking", (t: number) => onCursor(t));
-    ws.on("play", () => setPlaying(true));
-    ws.on("pause", () => setPlaying(false));
-    ws.on("finish", () => setPlaying(false));
+    ws.on("play", () => { setPlaying(true); onPlaying?.(true); });
+    ws.on("pause", () => { setPlaying(false); onPlaying?.(false); });
+    ws.on("finish", () => { setPlaying(false); onPlaying?.(false); });
     return () => { ws.destroy(); wsRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl]);

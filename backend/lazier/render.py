@@ -181,8 +181,11 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
            "-map", "[vout]", "-map", amap,
            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", preset, "-crf", crf,
            "-c:a", "aac", "-b:a", "192k",
-           "-t", f"{total:.3f}", "-movflags", "+faststart",
-           str(out_path)]
+           "-t", f"{total:.3f}", "-movflags", "+faststart"]
+    if height:  # proxy: dense keyframes so scrub-seek snaps instantly to the playhead
+        gop = max(int(project.fps // 2), 5)
+        cmd += ["-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0"]
+    cmd += [str(out_path)]
     return cmd
 
 

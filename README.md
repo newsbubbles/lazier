@@ -128,7 +128,9 @@ preview, then Export.
 ## Status
 
 Built and verified: M1 (transcribe → two-pass segmentation → aligned timeline → ffmpeg
-export) and M2 (per-beat YouTube + web-capture sourcing, vision verification, suggestion
-cards, auto-assemble). Next: M3 — chunked proxy preview synced live to the audio clock.
+export), M2 (per-beat YouTube + web-capture sourcing, vision verification, suggestion
+cards, auto-assemble), and M3 (proxy preview synced live to the audio clock — scrub or
+play the timeline and the muted proxy video follows; dense-keyframe proxy for snappy
+seeks). Next: incremental chunked proxy cache (re-render only edited regions).
 
 See `notes/` for the architecture and design decisions.
