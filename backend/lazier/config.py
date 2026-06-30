@@ -57,6 +57,9 @@ SOURCE_MAX_QUERIES = int(os.environ.get("LAZIER_SOURCE_MAX_QUERIES", "2"))
 SOURCE_MAX_CANDIDATES = int(os.environ.get("LAZIER_SOURCE_MAX_CANDIDATES", "3"))
 SOURCE_MAX_CLIP_SECONDS = float(os.environ.get("LAZIER_SOURCE_MAX_CLIP_SECONDS", "12"))
 SOURCE_CONCURRENCY = int(os.environ.get("LAZIER_SOURCE_CONCURRENCY", "2"))
+# Web capture (Playwright): auto-offer a site scroll-through when a beat references
+# an article/paper/news. Manual per-beat capture is always available.
+WEB_CAPTURE_AUTO = os.environ.get("LAZIER_WEB_CAPTURE_AUTO", "1") not in ("0", "false", "")
 
 # --- ffmpeg ------------------------------------------------------------------
 FFMPEG = os.environ.get("LAZIER_FFMPEG", "ffmpeg")

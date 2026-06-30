@@ -72,6 +72,13 @@ export const api = {
     fetch(`/api/projects/${id}/source-all${sectionId ? `?section_id=${sectionId}` : ""}`,
       { method: "POST" }).then(j<{ status: string; beats: number }>),
 
+  captureSite: (id: string, bid: string, url: string, highlight?: string) =>
+    fetch(`/api/projects/${id}/beats/${bid}/capture`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, highlight: highlight || null }),
+    }).then(j),
+
   acceptCandidate: (id: string, bid: string, candidate_index: number) =>
     fetch(`/api/projects/${id}/beats/${bid}/accept`, {
       method: "POST",

@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { Beat, Project } from "../lib/types";
 
@@ -11,6 +11,7 @@ export function SuggestionPanel({
   busy: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [url, setUrl] = useState("");
   const sug = project.suggestions?.[beat.id];
   const section = project.sections.find((s) => s.id === beat.section_id);
   const filledClip = project.tracks.find((t) => t.kind === "visual")
@@ -18,6 +19,11 @@ export function SuggestionPanel({
 
   const find = async () => { await api.sourceBeat(project.id, beat.id); onChanged(); };
   const use = async (idx: number) => onChanged(await api.acceptCandidate(project.id, beat.id, idx));
+  const capture = async () => {
+    if (!url.trim()) return;
+    await api.captureSite(project.id, beat.id, url.trim(), beat.text);
+    setUrl(""); onChanged();
+  };
 
   const uploadOwn = async (f: File) => {
     const asset = await api.uploadMedia(project.id, f);
@@ -45,6 +51,16 @@ export function SuggestionPanel({
         <button onClick={() => fileRef.current?.click()} disabled={busy}>⬆ Use my own</button>
         <input ref={fileRef} type="file" accept="video/*,image/*" hidden
                onChange={(e) => e.target.files?.[0] && uploadOwn(e.target.files[0])} />
+      </div>
+
+      <div className="capture-row">
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="paste a URL to scroll-capture a site…"
+               onKeyDown={(e) => e.key === "Enter" && capture()} />
+        <button onClick={capture} disabled={busy || !url.trim()}>🌐 Capture</button>
+      </div>
+      <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
+        records a scroll-through of the page, highlighting this moment's words. Agents also
+        auto-offer a site when a moment cites a source.
       </div>
 
       {sug?.status === "sourcing" && <div className="muted">sourcing… agents are finding clips for this moment</div>}

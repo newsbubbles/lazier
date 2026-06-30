@@ -172,3 +172,5 @@ a { color: var(--accent); }
 .pill.flag { color: var(--muted); }
 .cand-why { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
 .cand-body button { width: 100%; }
+.capture-row { display: flex; gap: 6px; margin-bottom: 4px; }
+.capture-row input { flex: 1; font-size: 12px; }

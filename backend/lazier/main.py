@@ -315,6 +315,11 @@ class AcceptBody(BaseModel):
     candidate_index: int = 0
 
 
+class CaptureBody(BaseModel):
+    url: str
+    highlight: Optional[str] = None
+
+
 def _beat_filled(project: Project, bid: str) -> bool:
     vt = project.visual_track()
     return bool(vt and any(c.beat_id == bid for c in vt.clips))
@@ -402,6 +407,31 @@ async def source_all(pid: str, section_id: Optional[str] = None):
 
     asyncio.create_task(job())
     return {"status": "started", "beats": len(targets)}
+
+
+@app.post("/api/projects/{pid}/beats/{bid}/capture")
+async def capture_site(pid: str, bid: str, body: CaptureBody):
+    p = _load(pid)
+    beat = p.beat(bid)
+    if not beat:
+        raise HTTPException(404, f"no beat {bid}")
+    p.suggestions[bid] = Suggestion(beat_id=bid, status="sourcing",
+                                    candidates=(p.suggestions.get(bid).candidates if p.suggestions.get(bid) else []))
+    storage.save(p)
+    loop = asyncio.get_running_loop()
+
+    async def job():
+        ev = _emitter(pid, loop)
+        try:
+            sug, assets = await asyncio.to_thread(sourcing.capture_url, p, beat, body.url, body.highlight)
+            await _apply(pid, sug, assets, place=True)
+            await hub.send(pid, {"stage": "source_done", "beat_id": bid,
+                                 "status": sug.status, "candidates": len(sug.candidates)})
+        except Exception as e:
+            await hub.send(pid, {"stage": "error", "beat_id": bid, "error": f"{type(e).__name__}: {e}"})
+
+    asyncio.create_task(job())
+    return {"status": "started"}
 
 
 @app.post("/api/projects/{pid}/beats/{bid}/accept")

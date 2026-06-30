@@ -60,7 +60,7 @@ class Beat(BaseModel):
 
 # --- media + timeline --------------------------------------------------------
 AssetKind = Literal["video", "image", "audio"]
-AssetOrigin = Literal["upload", "pool", "youtube", "pexels", "pixabay", "openverse",
+AssetOrigin = Literal["upload", "pool", "youtube", "web", "pexels", "pixabay", "openverse",
                       "internet_archive", "mixkit", "imgflip", "coverr", "giphy",
                       "reddit", "imgur", "fal"]
 

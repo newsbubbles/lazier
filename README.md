@@ -9,6 +9,7 @@ spine. M1 (the spine) is built; agent sourcing is M2+. See `notes/` for the plan
 - Python 3.11+, [uv](https://github.com/astral-sh/uv)
 - Node 20+, npm
 - ffmpeg + ffprobe on PATH (tested with ffmpeg 8.1)
+- Playwright Chromium for web-capture: `uv run playwright install chromium` (~200MB)
 - Whisper runs on **CPU by default** (no GPU libs needed). To use an NVIDIA GPU
   instead, install `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` (~1GB) and set
   `LAZIER_WHISPER_DEVICE=cuda`. We never silently fall back between devices.
