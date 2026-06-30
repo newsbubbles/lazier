@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from . import config
 from .llm import json_chat
-from .models import Section, Segment, Transcript
+from .models import Beat, Section, Segment, Transcript
 
 
 def pass1_segments(transcript: Transcript, gap: float | None = None) -> list[Segment]:
@@ -108,8 +108,39 @@ def _one_section_per_segment(segments: list[Segment]) -> list[Section]:
     ]
 
 
-def segment(transcript: Transcript, llm_merge: bool = True) -> tuple[list[Segment], list[Section]]:
+def build_beats(sections: list[Section], segments: list[Segment],
+                min_dur: float | None = None) -> list[Beat]:
+    """The visual units. Within each section (chapter), coalesce its segments into
+    beats of at least min_dur seconds, so each beat is a sensible clip length and
+    never crosses a chapter boundary. A new clip per beat = visuals reactive to the
+    moment's words, not one clip per whole chapter."""
+    min_dur = config.BEAT_MIN_SECONDS if min_dur is None else min_dur
+    by_id = {s.id: s for s in segments}
+    beats: list[Beat] = []
+    for sec in sections:
+        members = [by_id[sid] for sid in sec.segment_ids if sid in by_id]
+        if not members:
+            continue
+        cur: list[Segment] = []
+        for seg in members:
+            cur.append(seg)
+            if (cur[-1].end - cur[0].start) >= min_dur:
+                beats.append(Beat(section_id=sec.id, start=cur[0].start, end=cur[-1].end,
+                                  text=" ".join(s.text for s in cur).strip()))
+                cur = []
+        if cur:  # trailing remainder: fold into the previous beat in this section if any
+            if beats and beats[-1].section_id == sec.id:
+                beats[-1].end = cur[-1].end
+                beats[-1].text = (beats[-1].text + " " + " ".join(s.text for s in cur)).strip()
+            else:
+                beats.append(Beat(section_id=sec.id, start=cur[0].start, end=cur[-1].end,
+                                  text=" ".join(s.text for s in cur).strip()))
+    return beats
+
+
+def segment(transcript: Transcript,
+            llm_merge: bool = True) -> tuple[list[Segment], list[Section], list[Beat]]:
     segs = pass1_segments(transcript)
-    if not llm_merge:
-        return segs, _one_section_per_segment(segs)
-    return segs, pass2_sections(segs)
+    sections = pass2_sections(segs) if llm_merge else _one_section_per_segment(segs)
+    beats = build_beats(sections, segs)
+    return segs, sections, beats

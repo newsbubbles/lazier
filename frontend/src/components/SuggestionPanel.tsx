@@ -1,45 +1,42 @@
 import { useRef } from "react";
 import { api } from "../lib/api";
-import type { Project, Section } from "../lib/types";
+import type { Beat, Project } from "../lib/types";
 
 export function SuggestionPanel({
-  project, section, onChanged, busy,
+  project, beat, onChanged, busy,
 }: {
   project: Project;
-  section: Section;
+  beat: Beat;
   onChanged: (p?: Project) => void;
   busy: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const sug = project.suggestions?.[section.id];
+  const sug = project.suggestions?.[beat.id];
+  const section = project.sections.find((s) => s.id === beat.section_id);
   const filledClip = project.tracks.find((t) => t.kind === "visual")
-    ?.clips.find((c) => c.section_id === section.id);
+    ?.clips.find((c) => c.beat_id === beat.id);
 
-  const find = async () => { await api.sourceSection(project.id, section.id); onChanged(); };
-
-  const use = async (idx: number) => {
-    const p = await api.acceptCandidate(project.id, section.id, idx);
-    onChanged(p);
-  };
+  const find = async () => { await api.sourceBeat(project.id, beat.id); onChanged(); };
+  const use = async (idx: number) => onChanged(await api.acceptCandidate(project.id, beat.id, idx));
 
   const uploadOwn = async (f: File) => {
     const asset = await api.uploadMedia(project.id, f);
     await api.placeClip(project.id, {
       track_id: project.tracks.find((t) => t.kind === "visual")!.id,
-      asset_id: asset.id, timeline_start: section.start, timeline_end: section.end,
+      asset_id: asset.id, timeline_start: beat.start, timeline_end: beat.end,
     });
-    // tag it to the section so it shows as filled
     onChanged();
   };
 
   return (
     <div className="sugpanel">
+      {section && <div className="sp-chapter">{section.topic_label}</div>}
       <div className="sp-head">
-        <div className="sp-title">{section.topic_label || "Section"}</div>
-        <div className="sp-time">{section.start.toFixed(1)}s – {section.end.toFixed(1)}s</div>
+        <div className="sp-title">this moment</div>
+        <div className="sp-time">{beat.start.toFixed(1)}s – {beat.end.toFixed(1)}s</div>
       </div>
-      <div className="sp-transcript">“{section.text}”</div>
-      {section.visual_brief && <div className="sp-brief">brief: {section.visual_brief}</div>}
+      <div className="sp-transcript">“{beat.text}”</div>
+      {section?.visual_brief && <div className="sp-brief">chapter theme: {section.visual_brief}</div>}
 
       <div className="row" style={{ margin: "10px 0", gap: 8 }}>
         <button className="primary" onClick={find} disabled={busy || sug?.status === "sourcing"}>
@@ -50,7 +47,7 @@ export function SuggestionPanel({
                onChange={(e) => e.target.files?.[0] && uploadOwn(e.target.files[0])} />
       </div>
 
-      {sug?.status === "sourcing" && <div className="muted">sourcing… agents are finding clips</div>}
+      {sug?.status === "sourcing" && <div className="muted">sourcing… agents are finding clips for this moment</div>}
       {sug?.status === "error" && <div className="err">{sug.error}</div>}
 
       <div className="cards">
@@ -84,7 +81,7 @@ export function SuggestionPanel({
 
       {!sug?.candidates?.length && sug?.status !== "sourcing" && (
         <div className="muted" style={{ fontSize: 12 }}>
-          No clips yet. Hit “Find clips” and agents will source b-roll for this line.
+          No clips yet. Hit “Find clips” and agents will source b-roll for this exact moment.
         </div>
       )}
     </div>

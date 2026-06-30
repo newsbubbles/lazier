@@ -65,14 +65,15 @@ export const api = {
   deleteClip: (id: string, clipId: string) =>
     fetch(`/api/projects/${id}/clips/${clipId}`, { method: "DELETE" }).then(j),
 
-  sourceSection: (id: string, sid: string) =>
-    fetch(`/api/projects/${id}/sections/${sid}/source`, { method: "POST" }).then(j),
+  sourceBeat: (id: string, bid: string) =>
+    fetch(`/api/projects/${id}/beats/${bid}/source`, { method: "POST" }).then(j),
 
-  sourceAll: (id: string) =>
-    fetch(`/api/projects/${id}/source-all`, { method: "POST" }).then(j<{ status: string; sections: number }>),
+  sourceAll: (id: string, sectionId?: string) =>
+    fetch(`/api/projects/${id}/source-all${sectionId ? `?section_id=${sectionId}` : ""}`,
+      { method: "POST" }).then(j<{ status: string; beats: number }>),
 
-  acceptCandidate: (id: string, sid: string, candidate_index: number) =>
-    fetch(`/api/projects/${id}/sections/${sid}/accept`, {
+  acceptCandidate: (id: string, bid: string, candidate_index: number) =>
+    fetch(`/api/projects/${id}/beats/${bid}/accept`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ candidate_index }),

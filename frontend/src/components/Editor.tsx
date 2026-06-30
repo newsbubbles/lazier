@@ -11,7 +11,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   const [project, setProject] = useState<Project | null>(null);
   const [cursor, setCursor] = useState(0);
   const [log, setLog] = useState<string[]>([]);
-  const [selectedSection, setSelectedSection] = useState<string | null>(null);
+  const [selectedBeat, setSelectedBeat] = useState<string | null>(null);
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
@@ -46,8 +46,8 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   if (!project) return <div className="wrap"><p className="muted">Loading…</p></div>;
 
   const audioAsset = project.audio_asset_id ? project.assets[project.audio_asset_id] : null;
-  const sectionObj = project.sections.find((s) => s.id === selectedSection) || null;
-  const sourcedCount = project.tracks.find((t) => t.kind === "visual")?.clips.filter(c => c.section_id).length ?? 0;
+  const beatObj = project.beats.find((b) => b.id === selectedBeat) || null;
+  const sourcedCount = project.tracks.find((t) => t.kind === "visual")?.clips.filter(c => c.beat_id).length ?? 0;
 
   const onAudio = async (f: File) => {
     setErr(""); setBusy("uploading audio");
@@ -108,11 +108,11 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
             <>
               <h3>Auto-assemble</h3>
               <button className="primary" onClick={sourceAll} disabled={!!busy} style={{ width: "100%" }}>
-                ✨ Auto-source all sections
+                ✨ Auto-source all beats
               </button>
               <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                {sourcedCount}/{project.sections.length} sections have a visual. Agents find b-roll
-                per line; click any section to review or swap.
+                {sourcedCount}/{project.beats.length} beats have a clip. Agents find b-roll
+                reactive to each moment; click any beat to review or swap.
               </div>
             </>
           )}
@@ -136,14 +136,14 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
 
           {audioAsset
             ? <Timeline project={project} pxPerSec={PX_PER_SEC} cursor={cursor} onCursor={setCursor}
-                        selectedSectionId={selectedSection} onSelectSection={setSelectedSection} />
+                        selectedBeatId={selectedBeat} onSelectBeat={setSelectedBeat} />
             : <div className="bottom" style={{ padding: 20 }}><span className="muted">Upload audio to build the timeline.</span></div>}
         </div>
 
         <div className="sugcol">
-          {sectionObj
-            ? <SuggestionPanel project={project} section={sectionObj} busy={!!busy} onChanged={reload} />
-            : <div className="sp-empty muted">Click a section on the timeline to see clip suggestions, or hit Auto-source all.</div>}
+          {beatObj
+            ? <SuggestionPanel project={project} beat={beatObj} busy={!!busy} onChanged={reload} />
+            : <div className="sp-empty muted">Click a beat on the timeline to see clip suggestions for that moment, or hit Auto-source all beats.</div>}
         </div>
       </div>
       {err && <div className="err" style={{ padding: "6px 16px" }}>{err}</div>}

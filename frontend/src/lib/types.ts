@@ -7,6 +7,9 @@ export interface Section {
   id: string; start: number; end: number; text: string;
   topic_label: string; visual_brief: string; segment_ids: string[];
 }
+export interface Beat {
+  id: string; section_id: string; start: number; end: number; text: string;
+}
 
 export type AssetKind = "video" | "image" | "audio";
 
@@ -25,13 +28,14 @@ export interface Candidate {
   fit_score: number; thumb: string; flags: string[]; quarantined: boolean;
 }
 export interface Suggestion {
-  id: string; section_id: string;
+  id: string; beat_id: string;
   status: "sourcing" | "ready" | "error" | "empty";
   candidates: Candidate[]; recommended_index: number; error: string; queries: string[];
 }
 
 export interface Clip {
-  id: string; track_id: string; asset_id: string; section_id: string | null;
+  id: string; track_id: string; asset_id: string;
+  beat_id: string | null; section_id: string | null;
   timeline_start: number; timeline_end: number;
   source_in: number; source_out: number | null;
   transforms: Transforms; effects: Effects; z_order: number;
@@ -50,7 +54,7 @@ export interface Project {
   rights_posture: string; media_pool_path: string | null;
   assets: Record<string, MediaAsset>;
   transcript: Transcript | null;
-  segments: Segment[]; sections: Section[];
+  segments: Segment[]; sections: Section[]; beats: Beat[];
   suggestions: Record<string, Suggestion>;
   tracks: Track[];
 }

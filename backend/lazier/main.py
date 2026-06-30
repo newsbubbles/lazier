@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from . import config, render, segmentation, sourcing, storage, transcribe
 from .media_probe import probe
-from .models import Candidate, Clip, Effects, MediaAsset, Project, Section, Suggestion, Transforms
+from .models import Beat, Candidate, Clip, Effects, MediaAsset, Project, Section, Suggestion, Transforms
 
 _apply_lock = asyncio.Lock()
 
@@ -183,13 +183,20 @@ async def transcribe_project(pid: str, merge: bool = True):
             transcript = await asyncio.to_thread(transcribe.transcribe, audio_path, progress)
             p.transcript = transcript
             await hub.send(pid, {"stage": "segment", "status": "running",
-                                 "msg": "pass 1 (timing) + pass 2 (merge)"})
-            segs, sections = await asyncio.to_thread(segmentation.segment, transcript, merge)
+                                 "msg": "pass 1 (timing) + pass 2 (chapters) + beats"})
+            segs, sections, beats = await asyncio.to_thread(segmentation.segment, transcript, merge)
             p.segments = segs
             p.sections = sections
+            p.beats = beats
+            # re-transcription invalidates old sourcing: drop suggestions + sourced clips
+            p.suggestions = {}
+            for t in p.tracks:
+                if t.kind == "visual":
+                    t.clips = [c for c in t.clips if not c.beat_id and not c.section_id]
             render.write_srt(p)
             storage.save(p)
-            await hub.send(pid, {"stage": "done", "segments": len(segs), "sections": len(sections)})
+            await hub.send(pid, {"stage": "done", "segments": len(segs),
+                                 "sections": len(sections), "beats": len(beats)})
         except Exception as e:  # surfaced with state, no silent fallback
             await hub.send(pid, {"stage": "error", "error": f"{type(e).__name__}: {e}"})
 
@@ -303,40 +310,40 @@ def render_export(pid: str):
     return {"video": f"/files/{pid}/{res['video']}", "srt": f"/files/{pid}/captions.srt"}
 
 
-# --- M2: sourcing ------------------------------------------------------------
+# --- M2: sourcing (per BEAT) -------------------------------------------------
 class AcceptBody(BaseModel):
     candidate_index: int = 0
 
 
-def _section_filled(project: Project, sid: str) -> bool:
+def _beat_filled(project: Project, bid: str) -> bool:
     vt = project.visual_track()
-    return bool(vt and any(c.section_id == sid for c in vt.clips))
+    return bool(vt and any(c.beat_id == bid for c in vt.clips))
 
 
-def _place_candidate(project: Project, section: Section, cand: Candidate) -> None:
+def _place_candidate(project: Project, beat: Beat, cand: Candidate) -> None:
     vt = project.visual_track()
     if not vt:
         return
-    vt.clips = [c for c in vt.clips if c.section_id != section.id]  # replace any existing
+    vt.clips = [c for c in vt.clips if c.beat_id != beat.id]  # replace any existing
     asset = project.assets.get(cand.asset_id)
-    sec_len = section.end - section.start
-    so = min(asset.duration, sec_len) if asset and asset.duration else None
-    vt.clips.append(Clip(track_id=vt.id, asset_id=cand.asset_id, section_id=section.id,
-                         timeline_start=section.start, timeline_end=section.end,
-                         source_in=0.0, source_out=so))
+    beat_len = beat.end - beat.start
+    so = min(asset.duration, beat_len) if asset and asset.duration else None
+    vt.clips.append(Clip(track_id=vt.id, asset_id=cand.asset_id, beat_id=beat.id,
+                         section_id=beat.section_id, timeline_start=beat.start,
+                         timeline_end=beat.end, source_in=0.0, source_out=so))
 
 
 async def _apply(pid: str, sug: Suggestion, assets: list[MediaAsset], place: bool) -> None:
-    """Merge a section's sourcing result into the project under a lock (concurrency-safe)."""
+    """Merge a beat's sourcing result into the project under a lock (concurrency-safe)."""
     async with _apply_lock:
         p = storage.load(pid)
         for a in assets:
             p.assets[a.id] = a
-        p.suggestions[sug.section_id] = sug
+        p.suggestions[sug.beat_id] = sug
         if place and sug.status == "ready" and sug.candidates:
-            sec = p.section(sug.section_id)
-            if sec:
-                _place_candidate(p, sec, sug.candidates[sug.recommended_index])
+            beat = p.beat(sug.beat_id)
+            if beat:
+                _place_candidate(p, beat, sug.candidates[sug.recommended_index])
         storage.save(p)
 
 
@@ -346,70 +353,67 @@ def _emitter(pid: str, loop):
     return ev
 
 
-@app.post("/api/projects/{pid}/sections/{sid}/source")
-async def source_one(pid: str, sid: str):
+async def _source_beat_job(pid: str, beat: Beat, loop, mark: bool = True):
+    p = storage.load(pid)
+    ev = _emitter(pid, loop)
+    try:
+        sug, assets = await asyncio.to_thread(sourcing.source_beat, p, beat, ev)
+        await _apply(pid, sug, assets, place=True)
+        await hub.send(pid, {"stage": "source_done", "beat_id": beat.id,
+                             "status": sug.status, "candidates": len(sug.candidates)})
+    except Exception as e:
+        await _apply(pid, Suggestion(beat_id=beat.id, status="error",
+                                     error=f"{type(e).__name__}: {e}"), [], place=False)
+        await hub.send(pid, {"stage": "error", "beat_id": beat.id, "error": f"{type(e).__name__}: {e}"})
+
+
+@app.post("/api/projects/{pid}/beats/{bid}/source")
+async def source_one_beat(pid: str, bid: str):
     p = _load(pid)
-    sec = p.section(sid)
-    if not sec:
-        raise HTTPException(404, f"no section {sid}")
-    p.suggestions[sid] = Suggestion(section_id=sid, status="sourcing")
+    beat = p.beat(bid)
+    if not beat:
+        raise HTTPException(404, f"no beat {bid}")
+    p.suggestions[bid] = Suggestion(beat_id=bid, status="sourcing")
     storage.save(p)
-    loop = asyncio.get_running_loop()
-
-    async def job():
-        ev = _emitter(pid, loop)
-        try:
-            sug, assets = await asyncio.to_thread(sourcing.source_section, p, sec, ev)
-            await _apply(pid, sug, assets, place=True)
-            await hub.send(pid, {"stage": "source_done", "section_id": sid,
-                                 "status": sug.status, "candidates": len(sug.candidates)})
-        except Exception as e:
-            await _apply(pid, Suggestion(section_id=sid, status="error",
-                                         error=f"{type(e).__name__}: {e}"), [], place=False)
-            await hub.send(pid, {"stage": "error", "section_id": sid, "error": f"{type(e).__name__}: {e}"})
-
-    asyncio.create_task(job())
+    asyncio.create_task(_source_beat_job(pid, beat, asyncio.get_running_loop()))
     return {"status": "started"}
 
 
 @app.post("/api/projects/{pid}/source-all")
-async def source_all(pid: str):
+async def source_all(pid: str, section_id: Optional[str] = None):
+    """Source every empty beat (optionally limited to one chapter)."""
     p = _load(pid)
-    targets = [s for s in p.sections if not _section_filled(p, s.id)]
+    targets = [b for b in p.beats if not _beat_filled(p, b.id)
+               and (section_id is None or b.section_id == section_id)]
     loop = asyncio.get_running_loop()
     sem = asyncio.Semaphore(config.SOURCE_CONCURRENCY)
+    for b in targets:
+        p.suggestions[b.id] = Suggestion(beat_id=b.id, status="sourcing")
+    storage.save(p)
 
-    async def one(sec: Section):
+    async def one(beat: Beat):
         async with sem:
-            ev = _emitter(pid, loop)
-            try:
-                sug, assets = await asyncio.to_thread(sourcing.source_section, p, sec, ev)
-                await _apply(pid, sug, assets, place=True)
-                await hub.send(pid, {"stage": "source_done", "section_id": sec.id,
-                                     "status": sug.status, "candidates": len(sug.candidates)})
-            except Exception as e:
-                await hub.send(pid, {"stage": "error", "section_id": sec.id,
-                                     "error": f"{type(e).__name__}: {e}"})
+            await _source_beat_job(pid, beat, loop)
 
     async def job():
         await hub.send(pid, {"stage": "source_all_start", "count": len(targets)})
-        await asyncio.gather(*[one(s) for s in targets])
+        await asyncio.gather(*[one(b) for b in targets])
         await hub.send(pid, {"stage": "source_all_done"})
 
     asyncio.create_task(job())
-    return {"status": "started", "sections": len(targets)}
+    return {"status": "started", "beats": len(targets)}
 
 
-@app.post("/api/projects/{pid}/sections/{sid}/accept")
-def accept_candidate(pid: str, sid: str, body: AcceptBody):
+@app.post("/api/projects/{pid}/beats/{bid}/accept")
+def accept_candidate(pid: str, bid: str, body: AcceptBody):
     p = _load(pid)
-    sug = p.suggestions.get(sid)
+    sug = p.suggestions.get(bid)
     if not sug or not sug.candidates:
-        raise HTTPException(404, "no suggestions for this section")
+        raise HTTPException(404, "no suggestions for this beat")
     if not (0 <= body.candidate_index < len(sug.candidates)):
         raise HTTPException(400, "candidate_index out of range")
     sug.recommended_index = body.candidate_index
-    sec = p.section(sid)
-    _place_candidate(p, sec, sug.candidates[body.candidate_index])
+    beat = p.beat(bid)
+    _place_candidate(p, beat, sug.candidates[body.candidate_index])
     storage.save(p)
     return p

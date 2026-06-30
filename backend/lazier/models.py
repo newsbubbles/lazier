@@ -36,8 +36,8 @@ class Segment(BaseModel):
 
 
 class Section(BaseModel):
-    """Pass 2: an LLM merges adjacent segments into coherent topic sections.
-    This is the unit the sourcing agents will work on in later milestones."""
+    """Pass 2: an LLM merges segments into coherent topic CHAPTERS. A section is the
+    thematic grouping + navigation unit, NOT the visual unit (that's the Beat)."""
     id: str = Field(default_factory=lambda: _id("sec"))
     start: float
     end: float
@@ -45,6 +45,17 @@ class Section(BaseModel):
     topic_label: str = ""
     visual_brief: str = ""
     segment_ids: list[str] = Field(default_factory=list)
+
+
+class Beat(BaseModel):
+    """The VISUAL unit: a short chunk of narration (a few seconds) that gets its own
+    clip, reactive to what's being said at that moment. Beats are built from pass-1
+    segments coalesced to a minimum length, and live inside one section (chapter)."""
+    id: str = Field(default_factory=lambda: _id("beat"))
+    section_id: str
+    start: float
+    end: float
+    text: str
 
 
 # --- media + timeline --------------------------------------------------------
@@ -85,7 +96,8 @@ class Clip(BaseModel):
     id: str = Field(default_factory=lambda: _id("clip"))
     track_id: str
     asset_id: str
-    section_id: Optional[str] = None   # set when a clip fills a transcript section
+    beat_id: Optional[str] = None      # set when a clip fills a transcript beat
+    section_id: Optional[str] = None   # the beat's parent chapter
     timeline_start: float
     timeline_end: float
     source_in: float = 0.0
@@ -110,7 +122,7 @@ class Candidate(BaseModel):
 
 class Suggestion(BaseModel):
     id: str = Field(default_factory=lambda: _id("sug"))
-    section_id: str
+    beat_id: str
     status: Literal["sourcing", "ready", "error", "empty"] = "empty"
     candidates: list[Candidate] = Field(default_factory=list)
     recommended_index: int = 0
@@ -153,7 +165,8 @@ class Project(BaseModel):
     transcript: Optional[Transcript] = None
     segments: list[Segment] = Field(default_factory=list)
     sections: list[Section] = Field(default_factory=list)
-    suggestions: dict[str, Suggestion] = Field(default_factory=dict)  # keyed by section_id
+    beats: list[Beat] = Field(default_factory=list)
+    suggestions: dict[str, Suggestion] = Field(default_factory=dict)  # keyed by beat_id
     tracks: list[Track] = Field(default_factory=list)
 
     # --- helpers ---
@@ -174,6 +187,9 @@ class Project(BaseModel):
 
     def section(self, section_id: str) -> Optional[Section]:
         return next((s for s in self.sections if s.id == section_id), None)
+
+    def beat(self, beat_id: str) -> Optional["Beat"]:
+        return next((b for b in self.beats if b.id == beat_id), None)
 
     def visual_track(self) -> Optional[Track]:
         return next((t for t in self.tracks if t.kind == "visual"), None)

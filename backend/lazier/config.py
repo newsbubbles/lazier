@@ -35,6 +35,9 @@ WHISPER_COMPUTE = os.environ.get("LAZIER_WHISPER_COMPUTE", "int8")
 
 # Pass-1 segmentation: split when the silent gap between words exceeds this (seconds).
 SEGMENT_GAP_SECONDS = float(os.environ.get("LAZIER_SEGMENT_GAP", "0.6"))
+# Beats = visual units. Coalesce segments within a chapter to at least this long, so
+# each beat is a clip-sized chunk reactive to the moment (a cut every ~N seconds).
+BEAT_MIN_SECONDS = float(os.environ.get("LAZIER_BEAT_MIN_SECONDS", "5.0"))
 
 # --- llm (OpenRouter, OpenAI-compatible) -------------------------------------
 # Default to Nate's non-anthropic pick. Pass-2 section merge needs this; pass-1

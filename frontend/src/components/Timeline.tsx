@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import WaveSurfer from "wavesurfer.js";
 import { api } from "../lib/api";
-import type { Project } from "../lib/types";
+import type { Clip, Project } from "../lib/types";
 
-// The transcript-driven timeline: waveform spine + transcript ribbon + visual track,
-// all on ONE shared time axis (pxPerSec) scrolling together. A clip sits directly
-// under the words it illustrates — that vertical alignment is the whole idea.
+// Transcript-driven timeline. One shared time axis (pxPerSec), everything scrolls
+// together. Sections (chapters) are the thin context band; BEATS are the visual
+// units — one clip slot per speech chunk, reactive to the moment's words.
+// Clicking a chapter or a beat seeks the master audio there (scrub by section/beat).
 export function Timeline({
-  project, pxPerSec, cursor, onCursor, selectedSectionId, onSelectSection,
+  project, pxPerSec, cursor, onCursor, selectedBeatId, onSelectBeat,
 }: {
   project: Project;
   pxPerSec: number;
   cursor: number;
   onCursor: (t: number) => void;
-  selectedSectionId: string | null;
-  onSelectSection: (sid: string) => void;
+  selectedBeatId: string | null;
+  onSelectBeat: (bid: string) => void;
 }) {
   const waveRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -27,30 +28,19 @@ export function Timeline({
   const audioUrl = project.audio_asset_id
     ? api.fileUrl(project.id, project.assets[project.audio_asset_id].local_path) : null;
 
-  const filled = useMemo(() => {
-    const set = new Set<string>();
+  const clipByBeat = useMemo(() => {
+    const map = new Map<string, Clip>();
     project.tracks.filter((t) => t.kind === "visual")
-      .forEach((t) => t.clips.forEach((c) => c.section_id && set.add(c.section_id)));
-    return set;
+      .forEach((t) => t.clips.forEach((c) => c.beat_id && map.set(c.beat_id, c)));
+    return map;
   }, [project]);
-
-  const visualClips = useMemo(
-    () => project.tracks.filter((t) => t.kind === "visual").flatMap((t) => t.clips),
-    [project]
-  );
 
   useEffect(() => {
     if (!waveRef.current || !audioUrl) return;
     const ws = WaveSurfer.create({
-      container: waveRef.current,
-      url: audioUrl,
-      height: 60,
-      fillParent: true,        // fills the contentW-wide container -> exact pxPerSec scale
-      autoScroll: false,
-      interact: true,
-      waveColor: "#46506a",
-      progressColor: "#5b78b0",
-      cursorWidth: 0,
+      container: waveRef.current, url: audioUrl, height: 56,
+      fillParent: true, autoScroll: false, interact: true,
+      waveColor: "#46506a", progressColor: "#5b78b0", cursorWidth: 0,
     });
     wsRef.current = ws;
     ws.on("audioprocess", (t: number) => onCursor(t));
@@ -62,26 +52,29 @@ export function Timeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl]);
 
-  const seekToClientX = (clientX: number) => {
+  const seek = (t: number) => {
+    if (!duration) return;
+    const tt = Math.max(0, Math.min(t, duration));
+    wsRef.current?.seekTo(tt / duration);
+    onCursor(tt);
+  };
+  const seekClientX = (clientX: number) => {
     const el = innerRef.current;
-    if (!el || !duration) return;
-    const x = clientX - el.getBoundingClientRect().left + el.scrollLeft;
-    const t = Math.max(0, Math.min(x / pxPerSec, duration));
-    wsRef.current?.seekTo(t / duration);
-    onCursor(t);
+    if (!el) return;
+    seek((clientX - el.getBoundingClientRect().left + el.scrollLeft) / pxPerSec);
   };
 
-  const sugStatus = (sid: string) => project.suggestions?.[sid]?.status;
-  const ribbonColor = (sid: string) => {
-    if (filled.has(sid)) return "var(--good)";
-    const st = sugStatus(sid);
+  const sugStatus = (bid: string) => project.suggestions?.[bid]?.status;
+  const beatColor = (bid: string) => {
+    if (clipByBeat.has(bid)) return "var(--good)";
+    const st = sugStatus(bid);
     if (st === "sourcing") return "var(--warn)";
     if (st === "ready") return "var(--accent)";
     if (st === "error") return "var(--bad)";
-    return "var(--panel-2)";
+    return "var(--border)";
   };
 
-  const ticks = [];
+  const ticks: number[] = [];
   for (let s = 0; s <= duration; s += 5) ticks.push(s);
 
   return (
@@ -90,61 +83,52 @@ export function Timeline({
         <button onClick={() => wsRef.current?.playPause()}>{playing ? "⏸" : "▶"}</button>
         <button onClick={() => { wsRef.current?.stop(); onCursor(0); }}>⏹</button>
         <span className="muted">{cursor.toFixed(2)}s / {duration.toFixed(1)}s</span>
+        <span className="muted">· {project.beats.length} beats / {project.sections.length} chapters</span>
       </div>
 
       <div className="tl-scroll">
         <div className="tl-inner" ref={innerRef} style={{ width: contentW }}>
-          {/* ruler */}
-          <div className="tl-ruler" onMouseDown={(e) => seekToClientX(e.clientX)}>
-            {ticks.map((s) => (
-              <span key={s} className="tick" style={{ left: s * pxPerSec }}>{s}s</span>
+          <div className="tl-ruler" onMouseDown={(e) => seekClientX(e.clientX)}>
+            {ticks.map((s) => <span key={s} className="tick" style={{ left: s * pxPerSec }}>{s}s</span>)}
+          </div>
+
+          {/* chapters (context + nav) */}
+          <div className="tl-row tl-chapters" onMouseDown={(e) => { if (e.target === e.currentTarget) seekClientX(e.clientX); }}>
+            {project.sections.map((s) => (
+              <div key={s.id} className="chapter"
+                   style={{ left: s.start * pxPerSec, width: Math.max((s.end - s.start) * pxPerSec - 2, 8) }}
+                   title={s.visual_brief || s.text} onClick={() => seek(s.start)}>
+                {s.topic_label || "chapter"}
+              </div>
             ))}
           </div>
 
           {/* waveform spine */}
           <div className="tl-row tl-wave"><div ref={waveRef} style={{ width: "100%" }} /></div>
 
-          {/* transcript ribbon */}
-          <div className="tl-row tl-ribbon" onMouseDown={(e) => { if (e.target === e.currentTarget) seekToClientX(e.clientX); }}>
-            {project.sections.map((s) => (
-              <div key={s.id}
-                   className={`ribbon-sec ${selectedSectionId === s.id ? "sel" : ""}`}
-                   style={{ left: s.start * pxPerSec, width: Math.max((s.end - s.start) * pxPerSec - 2, 8),
-                            borderColor: ribbonColor(s.id) }}
-                   title={s.text}
-                   onClick={() => onSelectSection(s.id)}>
-                <div className="rs-label">{s.topic_label || "•"}</div>
-                <div className="rs-text">{s.text}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* visual track — clips sit under the words they illustrate */}
-          <div className="tl-row tl-visual" onMouseDown={(e) => { if (e.target === e.currentTarget) seekToClientX(e.clientX); }}>
-            {project.sections.map((s) => !filled.has(s.id) && (
-              <div key={"e" + s.id} className="visual-empty"
-                   style={{ left: s.start * pxPerSec, width: Math.max((s.end - s.start) * pxPerSec - 2, 8) }}
-                   onClick={() => onSelectSection(s.id)}>
-                {sugStatus(s.id) === "sourcing" ? "sourcing…" : "needs a visual"}
-              </div>
-            ))}
-            {visualClips.map((c) => {
-              const asset = project.assets[c.asset_id];
-              const sug = c.section_id ? project.suggestions?.[c.section_id] : undefined;
-              const thumb = sug?.candidates?.[sug.recommended_index]?.thumb;
+          {/* beats = visual slots, one clip per speech chunk */}
+          <div className="tl-row tl-beats" onMouseDown={(e) => { if (e.target === e.currentTarget) seekClientX(e.clientX); }}>
+            {project.beats.map((b) => {
+              const clip = clipByBeat.get(b.id);
+              const sug = project.suggestions?.[b.id];
+              const thumb = clip && sug?.candidates?.[sug.recommended_index]?.thumb;
+              const w = Math.max((b.end - b.start) * pxPerSec - 2, 6);
               return (
-                <div key={c.id} className="visual-clip"
-                     style={{ left: c.timeline_start * pxPerSec,
-                              width: Math.max((c.timeline_end - c.timeline_start) * pxPerSec - 2, 10) }}
-                     onClick={() => c.section_id && onSelectSection(c.section_id)}>
+                <div key={b.id}
+                     className={`beat ${clip ? "filled" : "empty"} ${selectedBeatId === b.id ? "sel" : ""}`}
+                     style={{ left: b.start * pxPerSec, width: w, borderColor: beatColor(b.id) }}
+                     title={b.text}
+                     onClick={() => { onSelectBeat(b.id); seek(b.start); }}>
                   {thumb && <img src={api.fileUrl(project.id, thumb)} alt="" />}
-                  <span>{asset?.name ?? "clip"}</span>
+                  <span className="beat-cap">
+                    {clip ? (project.assets[clip.asset_id]?.name ?? "clip")
+                      : sugStatus(b.id) === "sourcing" ? "sourcing…" : b.text.slice(0, 24)}
+                  </span>
                 </div>
               );
             })}
           </div>
 
-          {/* playhead across all rows */}
           <div className="tl-playhead" style={{ left: cursor * pxPerSec }} />
         </div>
       </div>
