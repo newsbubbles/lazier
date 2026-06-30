@@ -5,11 +5,10 @@ import type { Project } from "../lib/types";
 import { Timeline } from "./Timeline";
 import { SuggestionPanel } from "./SuggestionPanel";
 
-const PX_PER_SEC = 90;
-
 export function Editor({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const [project, setProject] = useState<Project | null>(null);
   const [cursor, setCursor] = useState(0);
+  const [pxPerSec, setPxPerSec] = useState(90);
   const [log, setLog] = useState<string[]>([]);
   const [selectedBeat, setSelectedBeat] = useState<string | null>(null);
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
@@ -135,7 +134,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
           </div>
 
           {audioAsset
-            ? <Timeline project={project} pxPerSec={PX_PER_SEC} cursor={cursor} onCursor={setCursor}
+            ? <Timeline project={project} pxPerSec={pxPerSec} onZoom={setPxPerSec} cursor={cursor} onCursor={setCursor}
                         selectedBeatId={selectedBeat} onSelectBeat={setSelectedBeat} />
             : <div className="bottom" style={{ padding: 20 }}><span className="muted">Upload audio to build the timeline.</span></div>}
         </div>

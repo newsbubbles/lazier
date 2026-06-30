@@ -8,10 +8,11 @@ import type { Clip, Project } from "../lib/types";
 // units — one clip slot per speech chunk, reactive to the moment's words.
 // Clicking a chapter or a beat seeks the master audio there (scrub by section/beat).
 export function Timeline({
-  project, pxPerSec, cursor, onCursor, selectedBeatId, onSelectBeat,
+  project, pxPerSec, onZoom, cursor, onCursor, selectedBeatId, onSelectBeat,
 }: {
   project: Project;
   pxPerSec: number;
+  onZoom: (pps: number) => void;
   cursor: number;
   onCursor: (t: number) => void;
   selectedBeatId: string | null;
@@ -19,8 +20,11 @@ export function Timeline({
 }) {
   const waveRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WaveSurfer | null>(null);
   const [playing, setPlaying] = useState(false);
+  const ppsRef = useRef(pxPerSec);
+  ppsRef.current = pxPerSec;
 
   const duration = project.transcript?.duration
     || (project.audio_asset_id ? project.assets[project.audio_asset_id]?.duration : 0) || 0;
@@ -51,6 +55,39 @@ export function Timeline({
     return () => { ws.destroy(); wsRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl]);
+
+  // ctrl+wheel = zoom (anchored under the mouse); plain wheel = horizontal pan.
+  // Native non-passive listener so we can preventDefault the page scroll.
+  useEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const rect = sc.getBoundingClientRect();
+        const tAt = (e.clientX - rect.left + sc.scrollLeft) / ppsRef.current;
+        const next = Math.max(15, Math.min(400, ppsRef.current * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+        onZoom(next);
+        requestAnimationFrame(() => { sc.scrollLeft = tAt * next - (e.clientX - rect.left); });
+      } else {
+        e.preventDefault();
+        sc.scrollLeft += e.deltaY + e.deltaX;
+      }
+    };
+    sc.addEventListener("wheel", onWheel, { passive: false });
+    return () => sc.removeEventListener("wheel", onWheel);
+  }, [onZoom]);
+
+  // auto-PAGE (not realtime follow): when the playhead leaves the viewport, jump so
+  // it lands near the left edge and keep reading from there.
+  useEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    const x = cursor * pxPerSec;
+    if (x > sc.scrollLeft + sc.clientWidth - 48 || x < sc.scrollLeft) {
+      sc.scrollLeft = Math.max(0, x - 48);
+    }
+  }, [cursor, pxPerSec]);
 
   const seek = (t: number) => {
     if (!duration) return;
@@ -84,9 +121,11 @@ export function Timeline({
         <button onClick={() => { wsRef.current?.stop(); onCursor(0); }}>⏹</button>
         <span className="muted">{cursor.toFixed(2)}s / {duration.toFixed(1)}s</span>
         <span className="muted">· {project.beats.length} beats / {project.sections.length} chapters</span>
+        <div className="spacer" />
+        <span className="muted" style={{ fontSize: 11 }}>ctrl+wheel zoom · wheel pan</span>
       </div>
 
-      <div className="tl-scroll">
+      <div className="tl-scroll" ref={scrollRef}>
         <div className="tl-inner" ref={innerRef} style={{ width: contentW }}>
           <div className="tl-ruler" onMouseDown={(e) => seekClientX(e.clientX)}>
             {ticks.map((s) => <span key={s} className="tick" style={{ left: s * pxPerSec }}>{s}s</span>)}
