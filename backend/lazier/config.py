@@ -3,10 +3,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# On Windows the default ProactorEventLoop throws "WinError 6: handle is invalid" when
+# torn down after each pydantic-ai run_sync (overlapped-I/O cleanup bug), which hangs the
+# many-call segmentation/sourcing pipeline. SelectorEventLoop has no such teardown bug and
+# handles httpx fine. Set the policy at import (before any loop is created).
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # --- paths -------------------------------------------------------------------
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -35,17 +44,24 @@ WHISPER_COMPUTE = os.environ.get("LAZIER_WHISPER_COMPUTE", "int8")
 
 # Pass-1 segmentation: split when the silent gap between words exceeds this (seconds).
 SEGMENT_GAP_SECONDS = float(os.environ.get("LAZIER_SEGMENT_GAP", "0.6"))
-# Beats = visual units. Coalesce segments within a chapter to at least this long, so
-# each beat is a clip-sized chunk reactive to the moment (a cut every ~N seconds).
+# Beats = visual units. Pass A makes flush speech-timing beats (one per phrase); an
+# agent then MERGES adjacent phrases that share one visual, guarded by max: a merge is
+# rejected if the resulting beat would exceed BEAT_MAX_SECONDS. min is the target size,
+# max the hard ceiling (forced to at least 2x min so merges are always possible).
 BEAT_MIN_SECONDS = float(os.environ.get("LAZIER_BEAT_MIN_SECONDS", "5.0"))
+BEAT_MAX_SECONDS = max(float(os.environ.get("LAZIER_BEAT_MAX_SECONDS", "12.0")),
+                       2 * BEAT_MIN_SECONDS)
 
 # --- llm (OpenRouter, OpenAI-compatible) -------------------------------------
 # Default to Nate's non-anthropic pick. Pass-2 section merge needs this; pass-1
 # works without it. Missing key -> clear error at call time, never a fallback.
 OPENROUTER_BASE_URL = os.environ.get("LAZIER_LLM_BASE_URL", "https://openrouter.ai/api/v1")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-LLM_MODEL = os.environ.get("LAZIER_LLM_MODEL", "moonshotai/kimi-k2.5")
-# Vision model for clip verification (frame scoring). Fast + cheap + strong vision.
+# All lazier agents are structural extraction (segment/query/web-intent/scoring), not
+# open reasoning — so a fast model with reliable native structured output wins. Measured:
+# gemini-2.5-flash pass-2 = 9s + consistent; kimi-k2.5 = 35-98s + inconsistent chapter
+# counts. Override with LAZIER_LLM_MODEL to force kimi/grok if you prefer.
+LLM_MODEL = os.environ.get("LAZIER_LLM_MODEL", "google/gemini-2.5-flash")
 VLM_MODEL = os.environ.get("LAZIER_VLM_MODEL", "google/gemini-2.5-flash")
 
 # --- sourcing (M2) -----------------------------------------------------------

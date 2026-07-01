@@ -44,6 +44,9 @@ export const api = {
   transcribe: (id: string, merge: boolean) =>
     fetch(`/api/projects/${id}/transcribe?merge=${merge}`, { method: "POST" }).then(j),
 
+  resegment: (id: string) =>
+    fetch(`/api/projects/${id}/resegment?merge=true`, { method: "POST" }).then(j),
+
   placeClip: (id: string, body: {
     track_id: string; asset_id: string;
     timeline_start: number; timeline_end?: number;

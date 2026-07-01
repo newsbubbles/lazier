@@ -204,6 +204,35 @@ async def transcribe_project(pid: str, merge: bool = True):
     return {"status": "started"}
 
 
+@app.post("/api/projects/{pid}/resegment")
+async def resegment(pid: str, merge: bool = True):
+    """Re-run chapters + beats on the existing transcript (no Whisper). For iterating on
+    segmentation/beat logic. Clears suggestions and any sourced clips (beat ids change)."""
+    p = _load(pid)
+    if not p.segments:
+        raise HTTPException(400, "transcribe first")
+    loop = asyncio.get_running_loop()
+
+    async def job():
+        try:
+            await hub.send(pid, {"stage": "segment", "status": "running", "msg": "re-segmenting chapters + beats"})
+            sections, beats = await asyncio.to_thread(segmentation.chapters_and_beats, p.segments, merge)
+            p.sections = sections
+            p.beats = beats
+            p.suggestions = {}
+            for t in p.tracks:
+                if t.kind == "visual":
+                    t.clips = [c for c in t.clips if not c.beat_id and not c.section_id]
+            render.write_srt(p)
+            storage.save(p)
+            await hub.send(pid, {"stage": "done", "sections": len(sections), "beats": len(beats)})
+        except Exception as e:
+            await hub.send(pid, {"stage": "error", "error": f"{type(e).__name__}: {e}"})
+
+    asyncio.create_task(job())
+    return {"status": "started"}
+
+
 # --- own media ---------------------------------------------------------------
 @app.post("/api/projects/{pid}/media")
 async def upload_media(pid: str, file: UploadFile = File(...)):

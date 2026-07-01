@@ -79,6 +79,10 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
     setErr(""); setBusy("transcribing"); setLog((l) => [...l, "starting transcription…"]);
     try { await api.transcribe(projectId, true); } catch (e: any) { setErr(e.message); setBusy(""); }
   };
+  const resegment = async () => {
+    setErr(""); setBusy("re-segmenting"); setLog((l) => [...l, "re-segmenting chapters + beats…"]);
+    try { await api.resegment(projectId); } catch (e: any) { setErr(e.message); setBusy(""); }
+  };
   const sourceAll = async () => {
     setErr(""); setBusy("auto-sourcing");
     try { await api.sourceAll(projectId); } catch (e: any) { setErr(e.message); setBusy(""); }
@@ -120,9 +124,16 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
           ) : <div className="muted" style={{ fontSize: 12 }}>{audioAsset.name} · {audioAsset.duration.toFixed(1)}s</div>}
 
           {audioAsset && (
-            <button style={{ marginTop: 8 }} onClick={transcribe} disabled={!!busy}>
-              {project.sections.length ? "Re-transcribe" : "Transcribe → segment"}
-            </button>
+            <div className="row" style={{ marginTop: 8, gap: 6 }}>
+              <button onClick={transcribe} disabled={!!busy}>
+                {project.sections.length ? "Re-transcribe" : "Transcribe → segment"}
+              </button>
+              {project.sections.length > 0 && (
+                <button onClick={resegment} disabled={!!busy} title="Re-run chapters + beats on the existing transcript (no Whisper)">
+                  Re-segment
+                </button>
+              )}
+            </div>
           )}
 
           {project.sections.length > 0 && (

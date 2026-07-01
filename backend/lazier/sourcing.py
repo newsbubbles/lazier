@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from pydantic import BaseModel
+
 from . import config, serper, storage, vision, webcapture, youtube
-from .llm import json_chat
+from .agents import run_agent
 from .media_probe import probe
 from .models import Beat, Candidate, MediaAsset, Project, Section, Suggestion
 
@@ -33,13 +35,17 @@ _QSYS = (
 )
 
 
+class _Queries(BaseModel):
+    queries: list[str]
+
+
 def research_queries(beat_text: str, section: Optional[Section]) -> list[str]:
     theme = (section.visual_brief or section.topic_label) if section else ""
     user = (f"Moment (spoken now): {beat_text}\nChapter theme: {theme}\n\n"
-            f'Return JSON {{"queries": ["...", ...]}} with up to {config.SOURCE_MAX_QUERIES} queries '
-            f"for footage matching THIS moment.")
-    data = json_chat(_QSYS, user)
-    queries = [str(q).strip() for q in data.get("queries", []) if str(q).strip()]
+            f"Give up to {config.SOURCE_MAX_QUERIES} short search queries for footage "
+            f"matching THIS moment.")
+    out = run_agent(_QSYS, user, _Queries)
+    queries = [q.strip() for q in out.queries if q.strip()]
     return queries[:config.SOURCE_MAX_QUERIES] or [beat_text[:60]]
 
 
@@ -52,10 +58,17 @@ _WEBSYS = (
 )
 
 
-def web_intent(beat_text: str, section: Optional[Section]) -> dict:
+class _WebIntent(BaseModel):
+    relevant: bool
+    query: str = ""
+    highlight: str = ""
+
+
+def web_intent(beat_text: str, section: Optional[Section]) -> _WebIntent:
     theme = (section.visual_brief or section.topic_label) if section else ""
-    return json_chat(_WEBSYS, f"Moment: {beat_text}\nChapter theme: {theme}\n\n"
-                     'Return JSON {"relevant": true|false, "query": "...", "highlight": "..."}.')
+    user = (f"Moment: {beat_text}\nChapter theme: {theme}\n\n"
+            "Should this moment show an actual web page? If so give the query + highlight.")
+    return run_agent(_WEBSYS, user, _WebIntent)
 
 
 def _capture_candidate(project: Project, beat: Beat, url: str, title: str,
@@ -91,10 +104,10 @@ def _auto_web(project: Project, beat: Beat, section: Optional[Section],
         intent = web_intent(beat.text, section)
     except Exception:
         return None, None
-    if not intent.get("relevant"):
+    if not intent.relevant:
         return None, None
-    query = str(intent.get("query", "")).strip() or beat.text[:50]
-    highlight = str(intent.get("highlight", "")).strip() or None
+    query = intent.query.strip() or beat.text[:50]
+    highlight = intent.highlight.strip() or None
     _emit(on_event, beat_id=beat.id, msg=f"web intent: {query}")
     try:
         results = serper.search(query, num=4)
