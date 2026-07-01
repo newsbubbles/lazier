@@ -81,6 +81,8 @@ SOURCE_CONCURRENCY = int(os.environ.get("LAZIER_SOURCE_CONCURRENCY", "2"))
 # Web capture (Playwright): auto-offer a site scroll-through when a beat references
 # an article/paper/news. Manual per-beat capture is always available.
 WEB_CAPTURE_AUTO = os.environ.get("LAZIER_WEB_CAPTURE_AUTO", "1") not in ("0", "false", "")
+# Headed Chromium (off-screen window) is harder for bot-walls to detect than headless.
+CAPTURE_HEADED = os.environ.get("LAZIER_CAPTURE_HEADED", "0") not in ("0", "false", "")
 
 # --- ffmpeg ------------------------------------------------------------------
 FFMPEG = os.environ.get("LAZIER_FFMPEG", "ffmpeg")

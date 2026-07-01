@@ -24,7 +24,7 @@ def capture_scroll(url: str, out_path: Path, seconds: float,
 
     res = subprocess.run(
         [sys.executable, str(_WORKER), url, str(rec_dir), str(width), str(height),
-         f"{seconds:.2f}", highlight or ""],
+         f"{seconds:.2f}", highlight or "", "1" if config.CAPTURE_HEADED else "0"],
         capture_output=True, text=True, timeout=180,
     )
     if res.returncode == 2:  # bot-block / error page, not real content
@@ -36,12 +36,21 @@ def capture_scroll(url: str, out_path: Path, seconds: float,
         raise SourcingError(f"web capture failed: {tail[:180]}",
                             "discard this URL; try another search result")
 
+    # worker prints "TRIM <seconds>" = the offset where the shot (post-load) begins
+    trim = 0.0
+    for line in res.stdout.splitlines():
+        if line.startswith("TRIM "):
+            try:
+                trim = max(0.0, float(line.split()[1]))
+            except (ValueError, IndexError):
+                trim = 0.0
+
     webm = max(rec_dir.glob("*.webm"), key=lambda p: p.stat().st_mtime, default=None)
     if not webm:
         raise SourcingError("web capture produced no recording", "discard this URL")
 
     norm = subprocess.run([
-        config.FFMPEG, "-y", "-i", str(webm), "-t", f"{seconds:.2f}",
+        config.FFMPEG, "-y", "-i", str(webm), "-ss", f"{trim:.2f}", "-t", f"{seconds:.2f}",
         "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
         "-preset", "veryfast", "-crf", "23", str(out_path),
     ], capture_output=True, text=True)

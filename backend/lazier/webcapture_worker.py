@@ -6,6 +6,7 @@ Self-contained: imports only playwright + stdlib, never lazier.config (which wou
 the loop policy back to Selector). Argv: url rec_dir width height seconds highlight."""
 
 import sys
+import time
 import asyncio
 
 if sys.platform == "win32":
@@ -45,16 +46,18 @@ def _ease(p: float) -> float:
 
 def main() -> None:
     url, rec_dir, width, height, seconds, highlight = sys.argv[1:7]
+    headed = len(sys.argv) > 7 and sys.argv[7] == "1"
     width, height, seconds = int(width), int(height), float(seconds)
     highlight = highlight or None
     from playwright.sync_api import sync_playwright
 
     ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
           "Chrome/149.0.0.0 Safari/537.36")
+    args = ["--no-sandbox", "--disable-blink-features=AutomationControlled"]
+    if headed:
+        args += ["--window-position=-2400,-2400"]  # off-screen so it doesn't disrupt the desktop
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True, args=[
-            "--no-sandbox", "--disable-blink-features=AutomationControlled",
-        ])
+        browser = pw.chromium.launch(headless=not headed, args=args)
         ctx = browser.new_context(
             viewport={"width": width, "height": height},
             user_agent=ua, locale="en-US",
@@ -69,9 +72,17 @@ def main() -> None:
             "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
             "window.chrome={runtime:{}};"
         )
+        t_rec = time.monotonic()          # recording starts about here
         page = ctx.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(1400)
+        # let the page FULLY load before we start the shot (up to ~10s), so the clip
+        # doesn't open on a blank white loading frame.
+        for state, to in (("load", 10000), ("networkidle", 6000)):
+            try:
+                page.wait_for_load_state(state, timeout=to)
+            except Exception:
+                pass
+        page.wait_for_timeout(500)
 
         # bail if the site served a bot-block / error page instead of content
         try:
@@ -95,16 +106,28 @@ def main() -> None:
                 target_y = None
 
         page_h = page.evaluate("document.body.scrollHeight") or height
-        end_y = (max(0, target_y - height / 2) if target_y
-                 else max(0, min(page_h - height, page_h)))
+        # A gentle, bounded pan — NOT a blur through the whole page. If we found the
+        # highlighted line, pan to center it starting ~0.8 viewport above; otherwise a
+        # short pan from the top.
+        if target_y is not None:
+            end_scroll = max(0.0, target_y - height / 2)
+            start_scroll = max(0.0, end_scroll - height * 0.8)
+        else:
+            start_scroll = 0.0
+            end_scroll = min(float(page_h - height), height * 1.4)
+
+        page.evaluate(f"window.scrollTo(0, {start_scroll})")
+        page.wait_for_timeout(250)
+        t_scroll = time.monotonic() - t_rec        # trim everything before the shot
         steps = max(int(seconds * 25), 12)
         for i in range(steps + 1):
-            page.evaluate(f"window.scrollTo(0, {end_y * _ease(i / steps)})")
+            y = start_scroll + (end_scroll - start_scroll) * _ease(i / steps)
+            page.evaluate(f"window.scrollTo(0, {y})")
             page.wait_for_timeout(int(1000 / 25))
-        page.wait_for_timeout(400)
+        page.wait_for_timeout(300)
         ctx.close()
         browser.close()
-    print("OK")
+    print(f"TRIM {t_scroll:.2f}")
 
 
 if __name__ == "__main__":
