@@ -332,23 +332,35 @@ def delete_clip(pid: str, clip_id: str):
 
 
 # --- render ------------------------------------------------------------------
+def _render_emitter(pid: str, kind: str, loop):
+    """Push ffmpeg's 0..1 progress to the project's websocket from the render worker thread."""
+    def emit(frac: float):
+        asyncio.run_coroutine_threadsafe(
+            hub.send(pid, {"stage": "render", "kind": kind, "progress": frac}), loop)
+    return emit
+
+
 @app.post("/api/projects/{pid}/render/proxy")
-def render_proxy(pid: str):
+async def render_proxy(pid: str):
     p = _load(pid)
+    loop = asyncio.get_running_loop()
     try:
-        out = render.render_proxy(p)
+        out = await asyncio.to_thread(render.render_proxy, p, _render_emitter(pid, "proxy", loop))
     except RuntimeError as e:
         raise HTTPException(400, str(e))
+    await hub.send(pid, {"stage": "render_done", "kind": "proxy"})
     return {"url": f"/files/{pid}/proxies/{out.name}"}
 
 
 @app.post("/api/projects/{pid}/render/export")
-def render_export(pid: str):
+async def render_export(pid: str):
     p = _load(pid)
+    loop = asyncio.get_running_loop()
     try:
-        res = render.render_export(p)
+        res = await asyncio.to_thread(render.render_export, p, _render_emitter(pid, "export", loop))
     except RuntimeError as e:
         raise HTTPException(400, str(e))
+    await hub.send(pid, {"stage": "render_done", "kind": "export"})
     return {"video": f"/files/{pid}/{res['video']}", "srt": f"/files/{pid}/captions.srt"}
 
 

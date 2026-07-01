@@ -14,7 +14,10 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState("");
+  const [pct, setPct] = useState<number | null>(null);   // determinate progress 0..1, or null
   const [err, setErr] = useState("");
+  const srcTotal = useRef(0);
+  const srcDone = useRef(0);
 
   const audioInput = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -51,16 +54,18 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       let line = "";
-      if (m.stage === "transcribe" && m.progress != null) line = `transcribe ${Math.round(m.progress * 100)}%`;
+      if (m.stage === "transcribe" && m.progress != null) { line = `transcribe ${Math.round(m.progress * 100)}%`; setPct(m.progress); }
+      else if (m.stage === "render" && m.progress != null) { line = `rendering ${m.kind} ${Math.round(m.progress * 100)}%`; setPct(m.progress); }
+      else if (m.stage === "render_done") { line = `✓ ${m.kind} render done`; setPct(null); }
       else if (m.stage === "source" && m.msg) line = `· ${m.msg}`;
-      else if (m.stage === "source_done") line = `✓ section sourced (${m.candidates} clips)`;
-      else if (m.stage === "source_all_start") line = `sourcing ${m.count} sections…`;
+      else if (m.stage === "source_done") { srcDone.current += 1; if (srcTotal.current) setPct(srcDone.current / srcTotal.current); line = `✓ section sourced (${m.candidates} clips)`; }
+      else if (m.stage === "source_all_start") { srcTotal.current = m.count; srcDone.current = 0; setPct(0); line = `sourcing ${m.count} sections…`; }
       else if (m.stage === "source_all_done") line = `done sourcing all`;
       else if (m.stage === "error") line = `ERROR: ${m.error}`;
       else line = JSON.stringify(m);
       setLog((l) => [...l.slice(-80), line]);
       if (["done", "source_done", "source_all_done", "error"].includes(m.stage)) reload();
-      if (["done", "source_all_done"].includes(m.stage)) setBusy("");
+      if (["done", "source_all_done"].includes(m.stage)) { setBusy(""); setPct(null); }
     };
     return () => ws.close();
   }, [projectId]);
@@ -85,20 +90,20 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
     try { await api.resegment(projectId); } catch (e: any) { setErr(e.message); setBusy(""); }
   };
   const sourceAll = async () => {
-    setErr(""); setBusy("auto-sourcing");
-    try { await api.sourceAll(projectId, undefined, notes); } catch (e: any) { setErr(e.message); setBusy(""); }
+    setErr(""); setBusy("auto-sourcing"); setPct(0);
+    try { await api.sourceAll(projectId, undefined, notes); } catch (e: any) { setErr(e.message); setBusy(""); setPct(null); }
   };
   const doProxy = async () => {
-    setErr(""); setBusy("rendering preview");
+    setErr(""); setBusy("rendering preview"); setPct(0);
     try { const { url } = await api.renderProxy(projectId); setProxyUrl(url + `?t=${Date.now()}`); }
     catch (e: any) { setErr(e.message); }
-    setBusy("");
+    setBusy(""); setPct(null);
   };
   const doExport = async () => {
-    setErr(""); setBusy("exporting");
+    setErr(""); setBusy("exporting"); setPct(0);
     try { const r = await api.renderExport(projectId); window.open(r.video, "_blank"); }
     catch (e: any) { setErr(e.message); }
-    setBusy("");
+    setBusy(""); setPct(null);
   };
 
   return (
@@ -110,8 +115,16 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
         <span className="pill">{project.aspect_ratio}</span>
         <span className="pill">{project.rights_posture}</span>
         <div className="spacer" />
-        {busy && <span className="muted">{busy}…</span>}
+        {busy && (
+          <span className="busy-ind">
+            <span className="spinner" />
+            {busy}…{pct != null ? ` ${Math.round(pct * 100)}%` : ""}
+          </span>
+        )}
       </div>
+      {pct != null && (
+        <div className="progressbar"><div className="bar" style={{ width: `${Math.round(pct * 100)}%` }} /></div>
+      )}
 
       <div className="editor-main">
         <div className="side">

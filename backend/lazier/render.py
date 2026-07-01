@@ -11,10 +11,14 @@ animated captions) is M3+; this builds the honest first cut."""
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
+from typing import Callable, Optional
 
 from . import config, storage
 from .models import Clip, MediaAsset, Project
+
+Progress = Optional[Callable[[float], None]]   # called with a 0..1 render fraction
 
 
 # --- SRT ---------------------------------------------------------------------
@@ -174,10 +178,17 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
                     f"alimiter=limit=0.95[aout]")
         amap = "[aout]"         # filter label: brackets in -map
 
+    # Windows CreateProcess caps a command line at 32767 chars. With many clips the
+    # inline filtergraph alone blows past that (~300 chars/clip), so write it to a file
+    # and hand ffmpeg -filter_complex_script instead. Same graph, just off the argv.
+    filter_path = out_path.with_name(out_path.stem + ".filter.txt")
+    filter_path.parent.mkdir(parents=True, exist_ok=True)
+    filter_path.write_text(";".join(filt), encoding="utf-8")
+
     crf = "30" if height else "20"
     preset = "veryfast" if height else "medium"
     cmd = [config.FFMPEG, "-y", *inputs,
-           "-filter_complex", ";".join(filt),
+           "-filter_complex_script", str(filter_path),
            "-map", "[vout]", "-map", amap,
            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", preset, "-crf", crf,
            "-c:a", "aac", "-b:a", "192k",
@@ -185,27 +196,54 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
     if height:  # proxy: dense keyframes so scrub-seek snaps instantly to the playhead
         gop = max(int(project.fps // 2), 5)
         cmd += ["-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0"]
+    # machine-readable progress on stdout so callers can stream a real percentage
+    cmd += ["-progress", "pipe:1", "-nostats"]
     cmd += [str(out_path)]
     return cmd
 
 
-def _run(cmd: list[str]) -> None:
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        tail = "\n".join(res.stderr.strip().splitlines()[-12:])
-        raise RuntimeError(f"ffmpeg failed:\n{tail}")
+def _run(cmd: list[str], total: float = 0.0, on_progress: Progress = None) -> None:
+    # With a listener + known duration, stream ffmpeg's -progress (out_time in microseconds)
+    # into a 0..1 fraction. Without one, a plain blocking run — same command either way.
+    if on_progress and total > 0:
+        # stderr -> a temp file, NOT a pipe. With a 100-input filtergraph ffmpeg emits
+        # enough startup output to fill an undrained stderr pipe (~64KB) and then blocks,
+        # while we're busy reading the -progress stream on stdout: a deadlock. A file never
+        # backpressures; we read it back only if the render fails.
+        with tempfile.TemporaryFile() as errf:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf, text=True)
+            for line in proc.stdout or []:
+                line = line.strip()
+                if line.startswith(("out_time_us=", "out_time_ms=")):  # both are microseconds
+                    try:
+                        on_progress(min(int(line.split("=", 1)[1]) / 1_000_000 / total, 0.999))
+                    except ValueError:
+                        pass
+                elif line == "progress=end":
+                    on_progress(1.0)
+            proc.wait()
+            if proc.returncode != 0:
+                errf.seek(0)
+                err = errf.read().decode("utf-8", "replace")
+                tail = "\n".join(err.strip().splitlines()[-12:])
+                raise RuntimeError(f"ffmpeg failed:\n{tail}")
+    else:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            tail = "\n".join(res.stderr.strip().splitlines()[-12:])
+            raise RuntimeError(f"ffmpeg failed:\n{tail}")
 
 
-def render_proxy(project: Project) -> Path:
+def render_proxy(project: Project, on_progress: Progress = None) -> Path:
     out = storage.abs_path(project.id, "proxies/preview.mp4")
     out.parent.mkdir(parents=True, exist_ok=True)
-    _run(_build_command(project, out, height=config.PROXY_HEIGHT))
+    _run(_build_command(project, out, height=config.PROXY_HEIGHT), project.duration, on_progress)
     return out
 
 
-def render_export(project: Project) -> dict:
+def render_export(project: Project, on_progress: Progress = None) -> dict:
     out = storage.abs_path(project.id, "exports/export.mp4")
     out.parent.mkdir(parents=True, exist_ok=True)
-    _run(_build_command(project, out, height=None))
+    _run(_build_command(project, out, height=None), project.duration, on_progress)
     srt = write_srt(project)
     return {"video": "exports/export.mp4", "srt": srt.name}

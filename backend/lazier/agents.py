@@ -18,6 +18,16 @@ from . import config
 
 T = TypeVar("T", bound=BaseModel)
 
+# OpenRouter provider routing (forwarded verbatim as the request's `provider` field via
+# extra_body). require_parameters=true makes OpenRouter route ONLY to upstream providers
+# that support every parameter we send — critically the native json-schema structured
+# output we require through NativeOutput. The intermittent `finish_reason: 'error'`
+# (surfaced as UnexpectedModelBehavior over a ValidationError on finish_reason) is
+# OpenRouter picking a backend that can't honor that structured request and erroring
+# mid-generation; this excludes those backends. Additive routing metadata only — it does
+# not change output shape or any code path.
+_MODEL_SETTINGS: dict = {"extra_body": {"provider": {"require_parameters": True}}}
+
 
 def _build_model(model_name: str):
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -53,6 +63,7 @@ def run_agent(
         output_type=NativeOutput(output_type),
         system_prompt=system_prompt,
         retries=output_retries,   # pydantic-ai 2.2: unified retry ceiling (tools + output)
+        model_settings=_MODEL_SETTINGS,
     )
     if validator is not None:
         agent.output_validator(validator)
