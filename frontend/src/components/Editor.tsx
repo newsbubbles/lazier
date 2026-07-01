@@ -16,6 +16,8 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   const [busy, setBusy] = useState("");
   const [pct, setPct] = useState<number | null>(null);   // determinate progress 0..1, or null
   const [err, setErr] = useState("");
+  const [leftOpen, setLeftOpen] = useState(false);       // mobile drawers
+  const [rightOpen, setRightOpen] = useState(false);
   const srcTotal = useRef(0);
   const srcDone = useRef(0);
 
@@ -47,6 +49,13 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
       : api.getProject(projectId).then(setProject).catch((e) => setErr(e.message)));
 
   useEffect(() => { reload(); }, [projectId]);
+
+  // Restore the last-rendered proxy on load — it persists on disk as preview.mp4, the
+  // frontend just wasn't pointing at it after a refresh. HEAD it; adopt it if present.
+  useEffect(() => {
+    const u = `/files/${projectId}/proxies/preview.mp4`;
+    fetch(u, { method: "HEAD" }).then((r) => { if (r.ok) setProxyUrl(u + `?t=${Date.now()}`); }).catch(() => {});
+  }, [projectId]);
 
   useEffect(() => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -113,16 +122,20 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
       setLog((l) => [...l, "✓ YT chapters copied to clipboard (also saved as chapters.txt)"]);
     } catch (e: any) { setErr(e.message); }
   };
+  // selecting a beat opens the clips drawer on mobile (no-op visually on desktop)
+  const selectBeat = (id: string | null) => { setSelectedBeat(id); if (id) setRightOpen(true); };
 
   return (
     <div className="editor">
       <div className="topbar">
+        <button className="drawer-toggle" onClick={() => setLeftOpen((v) => !v)} title="Tools panel">☰</button>
         <span className="brand">laz<span>ier</span></span>
         <button onClick={onClose}>← Projects</button>
         <span className="muted">{project.name}</span>
         <span className="pill">{project.aspect_ratio}</span>
         <span className="pill">{project.rights_posture}</span>
         <div className="spacer" />
+        <button className="drawer-toggle" onClick={() => setRightOpen((v) => !v)} title="Clips panel">🎬</button>
         {busy && (
           <span className="busy-ind">
             <span className="spinner" />
@@ -135,7 +148,10 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
       )}
 
       <div className="editor-main">
-        <div className="side">
+        {(leftOpen || rightOpen) && (
+          <div className="drawer-backdrop" onClick={() => { setLeftOpen(false); setRightOpen(false); }} />
+        )}
+        <div className={`side${leftOpen ? " open" : ""}`}>
           <h3>Audio spine</h3>
           {!audioAsset ? (
             <>
@@ -198,11 +214,11 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
 
           {audioAsset
             ? <Timeline project={project} pxPerSec={pxPerSec} onZoom={setPxPerSec} cursor={cursor} onCursor={setCursor}
-                        onPlaying={onPlaying} selectedBeatId={selectedBeat} onSelectBeat={setSelectedBeat} />
+                        onPlaying={onPlaying} selectedBeatId={selectedBeat} onSelectBeat={selectBeat} />
             : <div className="bottom" style={{ padding: 20 }}><span className="muted">Upload audio to build the timeline.</span></div>}
         </div>
 
-        <div className="sugcol">
+        <div className={`sugcol${rightOpen ? " open" : ""}`}>
           {beatObj
             ? <SuggestionPanel project={project} beat={beatObj} notes={notes} busy={!!busy} onChanged={reload} />
             : <div className="sp-empty muted">Click a beat on the timeline to see clip suggestions for that moment, or hit Auto-source all beats.</div>}

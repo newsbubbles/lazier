@@ -188,3 +188,24 @@ a { color: var(--accent); }
 .cand-body button { width: 100%; }
 .capture-row { display: flex; gap: 6px; margin-bottom: 4px; }
 .capture-row input { flex: 1; font-size: 12px; }
+
+/* responsive: side + suggestion panels collapse into drawers on narrow viewports */
+.drawer-toggle { display: none; }
+.drawer-backdrop { display: none; }
+
+@media (max-width: 860px) {
+  .drawer-toggle { display: inline-flex; align-items: center; justify-content: center; padding: 6px 9px; }
+  .topbar { gap: 8px; }
+  .topbar .pill { display: none; }
+  .toolbar { flex-wrap: wrap; }
+
+  .editor-main { grid-template-columns: 1fr; }
+  .side, .sugcol {
+    position: fixed; top: 0; bottom: 0; width: min(86vw, 340px); z-index: 50;
+    overflow-y: auto; transition: transform 0.25s ease;
+  }
+  .side { left: 0; transform: translateX(-100%); }
+  .sugcol { right: 0; transform: translateX(100%); }
+  .side.open, .sugcol.open { transform: translateX(0); box-shadow: 0 0 40px rgba(0, 0, 0, 0.6); }
+  .drawer-backdrop { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 40; }
+}
