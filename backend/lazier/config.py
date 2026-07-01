@@ -63,9 +63,11 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 # counts. Override with LAZIER_LLM_MODEL to force kimi/grok if you prefer.
 LLM_MODEL = os.environ.get("LAZIER_LLM_MODEL", "google/gemini-2.5-flash")
 VLM_MODEL = os.environ.get("LAZIER_VLM_MODEL", "google/gemini-2.5-flash")
-# The Visual Director is the one agent where reasoning quality beats speed (register
-# variety, metaphor, anti-repetition). Default to the fast model; A/B kimi/grok here.
-DIRECTOR_MODEL = os.environ.get("LAZIER_DIRECTOR_MODEL", "google/gemini-2.5-flash")
+# The Visual Director is the one agent where reasoning quality beats speed. A/B on one
+# Neurocracy section: grok-4.20 = 5s + 4/5 register variety + metaphor (fastest of all);
+# gemini-flash = 10s + 5/5; kimi-k2-thinking = 21s + 3/5; kimi-k2.5 = 59s + 1/5 (unusable).
+# grok-4.20 wins on speed+quality (and it's Nate's vendor). Override via env.
+DIRECTOR_MODEL = os.environ.get("LAZIER_DIRECTOR_MODEL", "x-ai/grok-4.20")
 
 # --- sourcing (M2) -----------------------------------------------------------
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
