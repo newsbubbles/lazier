@@ -49,6 +49,26 @@ def write_srt(project: Project) -> Path:
     return out
 
 
+def _yt_ts(t: float) -> str:
+    t = max(0, int(t))
+    h, m, s = t // 3600, (t % 3600) // 60, t % 60
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def write_chapters(project: Project) -> Path:
+    """YouTube-description chapters from the project's topic sections, one per line as
+    'M:SS Title'. Paste into a YT description and YouTube auto-parses clickable chapters.
+    YT requires the first at 0:00, >=3 chapters, each >=10s apart — which our flush topic
+    sections satisfy. Written to the project folder so it's a copy-paste-ready artifact."""
+    secs = sorted(project.sections, key=lambda s: s.start)
+    out = storage.abs_path(project.id, "chapters.txt")
+    lines = [f"{_yt_ts(0.0 if i == 0 else s.start)} "
+             f"{(s.topic_label or s.visual_brief or f'Chapter {i + 1}').strip()}"
+             for i, s in enumerate(secs)]
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out
+
+
 # --- ffmpeg graph ------------------------------------------------------------
 def _visual_clips(project: Project) -> list[Clip]:
     clips: list[Clip] = []
@@ -246,4 +266,5 @@ def render_export(project: Project, on_progress: Progress = None) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
     _run(_build_command(project, out, height=None), project.duration, on_progress)
     srt = write_srt(project)
-    return {"video": "exports/export.mp4", "srt": srt.name}
+    chapters = write_chapters(project)
+    return {"video": "exports/export.mp4", "srt": srt.name, "chapters": chapters.name}

@@ -364,6 +364,17 @@ async def render_export(pid: str):
     return {"video": f"/files/{pid}/{res['video']}", "srt": f"/files/{pid}/captions.srt"}
 
 
+@app.get("/api/projects/{pid}/chapters")
+def get_chapters(pid: str):
+    """YouTube-description chapters (M:SS Title per line) from the project's topic sections.
+    Writes chapters.txt into the project folder and returns the text for copy-paste."""
+    p = _load(pid)
+    if not p.sections:
+        raise HTTPException(400, "no sections yet; transcribe + segment first")
+    path = render.write_chapters(p)
+    return {"text": path.read_text(encoding="utf-8"), "file": f"/files/{pid}/{path.name}"}
+
+
 # --- M2: sourcing (per BEAT) -------------------------------------------------
 class AcceptBody(BaseModel):
     candidate_index: int = 0

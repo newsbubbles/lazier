@@ -100,5 +100,8 @@ export const api = {
   renderExport: (id: string) =>
     fetch(`/api/projects/${id}/render/export`, { method: "POST" }).then(j<{ video: string; srt: string }>),
 
+  chapters: (id: string) =>
+    fetch(`/api/projects/${id}/chapters`).then(j<{ text: string; file: string }>),
+
   fileUrl: (id: string, rel: string) => `/files/${id}/${rel}`,
 };

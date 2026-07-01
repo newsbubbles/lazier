@@ -105,6 +105,14 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
     catch (e: any) { setErr(e.message); }
     setBusy(""); setPct(null);
   };
+  const copyChapters = async () => {
+    setErr("");
+    try {
+      const { text } = await api.chapters(projectId);
+      await navigator.clipboard.writeText(text);
+      setLog((l) => [...l, "✓ YT chapters copied to clipboard (also saved as chapters.txt)"]);
+    } catch (e: any) { setErr(e.message); }
+  };
 
   return (
     <div className="editor">
@@ -173,6 +181,10 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
           <div className="toolbar">
             <button onClick={doProxy} disabled={!audioAsset || !!busy}>Render preview</button>
             <button className="primary" onClick={doExport} disabled={!audioAsset || !!busy}>Export</button>
+            <button onClick={copyChapters} disabled={!project.sections.length}
+                    title="Copy YouTube chapter timestamps (also saved as chapters.txt)">
+              YT chapters
+            </button>
             <div className="spacer" />
             <span className="muted">{project.sections.length} sections</span>
           </div>
