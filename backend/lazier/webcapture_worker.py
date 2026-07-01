@@ -49,16 +49,43 @@ def main() -> None:
     highlight = highlight or None
     from playwright.sync_api import sync_playwright
 
+    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+          "Chrome/149.0.0.0 Safari/537.36")
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
+        browser = pw.chromium.launch(headless=True, args=[
+            "--no-sandbox", "--disable-blink-features=AutomationControlled",
+        ])
         ctx = browser.new_context(
             viewport={"width": width, "height": height},
+            user_agent=ua, locale="en-US",
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
             record_video_dir=rec_dir,
             record_video_size={"width": width, "height": height},
         )
+        # basic stealth: hide the automation tells most bot-walls check
+        ctx.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            "Object.defineProperty(navigator,'languages',{get:()=>['en-US','en']});"
+            "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
+            "window.chrome={runtime:{}};"
+        )
         page = ctx.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(900)
+        page.wait_for_timeout(1400)
+
+        # bail if the site served a bot-block / error page instead of content
+        try:
+            probe = (page.title() + " " + page.evaluate(
+                "document.body ? document.body.innerText.slice(0,500) : ''")).lower()
+        except Exception:
+            probe = ""
+        BLOCKS = ("access denied", "forbidden", "you don't have permission", "error 403",
+                  "just a moment", "are you a robot", "verify you are human", "captcha",
+                  "unusual traffic", "enable javascript and cookies")
+        if any(k in probe for k in BLOCKS):
+            ctx.close(); browser.close()
+            print(f"BLOCKED (bot detection): {probe[:90].strip()}", file=sys.stderr)
+            sys.exit(2)
 
         target_y = None
         if highlight:

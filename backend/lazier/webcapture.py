@@ -27,6 +27,10 @@ def capture_scroll(url: str, out_path: Path, seconds: float,
          f"{seconds:.2f}", highlight or ""],
         capture_output=True, text=True, timeout=180,
     )
+    if res.returncode == 2:  # bot-block / error page, not real content
+        tail = " ".join(res.stderr.strip().splitlines()[-2:])
+        raise SourcingError(f"site blocked the capture: {tail[:160]}",
+                            "this site blocks bots; try a different source URL")
     if res.returncode != 0:
         tail = " ".join((res.stderr or res.stdout).strip().splitlines()[-3:])
         raise SourcingError(f"web capture failed: {tail[:180]}",
