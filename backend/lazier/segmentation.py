@@ -199,10 +199,34 @@ def build_beats(sections: list[Section], segments: list[Segment],
     return [b for group in merged for b in group]
 
 
+def make_sections_flush(sections: list[Section], beats: list[Beat]) -> None:
+    """Close the black gaps between chapters IN PLACE: section N-1's end meets section N's
+    start (the inter-chapter silence joins the preceding chapter), the first section starts
+    at 0, and each chapter's beats are re-flushed to its new bounds. So the whole timeline
+    tiles with no holes. Deterministic — no LLM, safe to run on an existing project."""
+    if not sections:
+        return
+    secs = sorted(sections, key=lambda s: s.start)
+    secs[0].start = 0.0
+    for i in range(len(secs) - 1):
+        secs[i].end = secs[i + 1].start
+    for i in range(1, len(secs)):
+        secs[i].start = secs[i - 1].end
+    for sec in secs:
+        sb = sorted([b for b in beats if b.section_id == sec.id], key=lambda b: b.start)
+        if not sb:
+            continue
+        sb[0].start = sec.start
+        for k in range(len(sb) - 1):
+            sb[k].end = sb[k + 1].start
+        sb[-1].end = sec.end
+
+
 def chapters_and_beats(segments: list[Segment],
                        llm_merge: bool = True) -> tuple[list[Section], list[Beat]]:
     sections = pass2_sections(segments) if llm_merge else _one_section_per_segment(segments)
     beats = build_beats(sections, segments, llm=llm_merge)
+    make_sections_flush(sections, beats)
     return sections, beats
 
 
