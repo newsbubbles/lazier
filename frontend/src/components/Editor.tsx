@@ -12,6 +12,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   const [log, setLog] = useState<string[]>([]);
   const [selectedBeat, setSelectedBeat] = useState<string | null>(null);
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
+  const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
 
@@ -85,7 +86,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   };
   const sourceAll = async () => {
     setErr(""); setBusy("auto-sourcing");
-    try { await api.sourceAll(projectId); } catch (e: any) { setErr(e.message); setBusy(""); }
+    try { await api.sourceAll(projectId, undefined, notes); } catch (e: any) { setErr(e.message); setBusy(""); }
   };
   const doProxy = async () => {
     setErr(""); setBusy("rendering preview");
@@ -139,6 +140,8 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
           {project.sections.length > 0 && (
             <>
               <h3>Auto-assemble</h3>
+              <textarea className="notes-box" value={notes} onChange={(e) => setNotes(e.target.value)}
+                        placeholder="director notes (optional): what you want, a vibe, a specific scene… applies to Find clips too" />
               <button className="primary" onClick={sourceAll} disabled={!!busy} style={{ width: "100%" }}>
                 ✨ Auto-source all beats
               </button>
@@ -176,7 +179,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
 
         <div className="sugcol">
           {beatObj
-            ? <SuggestionPanel project={project} beat={beatObj} busy={!!busy} onChanged={reload} />
+            ? <SuggestionPanel project={project} beat={beatObj} notes={notes} busy={!!busy} onChanged={reload} />
             : <div className="sp-empty muted">Click a beat on the timeline to see clip suggestions for that moment, or hit Auto-source all beats.</div>}
         </div>
       </div>

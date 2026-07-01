@@ -120,10 +120,22 @@ class Candidate(BaseModel):
     quarantined: bool = False
 
 
+class BeatPlan(BaseModel):
+    """The Visual Director's decision for one beat: what shot to look for and where.
+    See notes/06-direction/visual-direction.md."""
+    visual_register: str = ""               # literal|evidence|data|metaphor|reaction|archival|ambient|motif
+    content_type: str = "youtube"           # youtube|web (image/meme/gen later)
+    shot_brief: str = ""                    # concrete description of the intended shot
+    search_terms: list[str] = Field(default_factory=list)
+    time_window: Optional[str] = None       # e.g. "2025-06" or "2025-06-30" for news/evidence
+    rationale: str = ""                     # director's reasoning (kept for the UI/tuning)
+
+
 class Suggestion(BaseModel):
     id: str = Field(default_factory=lambda: _id("sug"))
     beat_id: str
     status: Literal["sourcing", "ready", "error", "empty"] = "empty"
+    plan: Optional[BeatPlan] = None
     candidates: list[Candidate] = Field(default_factory=list)
     recommended_index: int = 0
     error: str = ""
@@ -160,6 +172,9 @@ class Project(BaseModel):
     budget_cap: float = 5.0
     rights_posture: RightsPosture = "anything_goes"
     media_pool_path: Optional[str] = None
+    tone: str = ""                          # Nate's tone/style intent (director context)
+    reference_date: str = ""                # optional "video is about <date>" (news time-scoping)
+    video_summary: str = ""                 # thesis/throughline, generated after transcription
 
     assets: dict[str, MediaAsset] = Field(default_factory=dict)
     transcript: Optional[Transcript] = None

@@ -63,6 +63,9 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 # counts. Override with LAZIER_LLM_MODEL to force kimi/grok if you prefer.
 LLM_MODEL = os.environ.get("LAZIER_LLM_MODEL", "google/gemini-2.5-flash")
 VLM_MODEL = os.environ.get("LAZIER_VLM_MODEL", "google/gemini-2.5-flash")
+# The Visual Director is the one agent where reasoning quality beats speed (register
+# variety, metaphor, anti-repetition). Default to the fast model; A/B kimi/grok here.
+DIRECTOR_MODEL = os.environ.get("LAZIER_DIRECTOR_MODEL", "google/gemini-2.5-flash")
 
 # --- sourcing (M2) -----------------------------------------------------------
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")

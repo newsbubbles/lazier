@@ -21,8 +21,10 @@ class SourcingError(RuntimeError):
         self.next = nxt
 
 
-def search(query: str, max_results: int = 5, duration: str = "short") -> list[dict]:
-    """Return lightweight candidate handles, never media. duration: short|medium|any."""
+def search(query: str, max_results: int = 5, duration: str = "short",
+           published_after: str | None = None, published_before: str | None = None) -> list[dict]:
+    """Return lightweight candidate handles, never media. duration: short|medium|any.
+    published_after/before are RFC3339 (e.g. 2025-06-01T00:00:00Z) for time-scoped news."""
     if not config.YOUTUBE_API_KEY:
         raise SourcingError("YOUTUBE_API_KEY not set",
                             "add the key to D:\\lazier\\.env, or source from stock (M4)")
@@ -32,6 +34,10 @@ def search(query: str, max_results: int = 5, duration: str = "short") -> list[di
     }
     if duration in ("short", "medium", "long"):
         params["videoDuration"] = duration
+    if published_after:
+        params["publishedAfter"] = published_after
+    if published_before:
+        params["publishedBefore"] = published_before
     r = httpx.get(SEARCH_URL, params=params, timeout=20)
     if r.status_code == 403:
         raise SourcingError(f"YouTube API rejected the request ({r.text[:120]})",

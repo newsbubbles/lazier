@@ -149,6 +149,11 @@ a { color: var(--accent); }
 .beat.empty .beat-cap { color: var(--muted); }
 
 .sp-chapter { font-size: 11px; color: var(--accent-2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.notes-box { width: 100%; min-height: 52px; resize: vertical; margin-bottom: 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px; }
+.sp-plan { margin: 8px 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.sp-plan .pill { margin-right: 4px; }
+.sp-plan .pill.reg { color: var(--accent-2); border-color: var(--accent-2); text-transform: uppercase; font-weight: 600; }
+.sp-shot { font-size: 12px; margin-top: 6px; color: var(--text); }
 
 /* suggestion panel */
 .sugpanel { padding: 14px; }

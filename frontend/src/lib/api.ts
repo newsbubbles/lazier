@@ -18,7 +18,7 @@ export const api = {
 
   createProject: (body: {
     name: string; aspect_ratio: string; fps: number;
-    budget_cap: number; rights_posture: string;
+    budget_cap: number; rights_posture: string; tone?: string; reference_date?: string;
   }) =>
     fetch("/api/projects", {
       method: "POST",
@@ -68,12 +68,17 @@ export const api = {
   deleteClip: (id: string, clipId: string) =>
     fetch(`/api/projects/${id}/clips/${clipId}`, { method: "DELETE" }).then(j),
 
-  sourceBeat: (id: string, bid: string) =>
-    fetch(`/api/projects/${id}/beats/${bid}/source`, { method: "POST" }).then(j),
+  sourceBeat: (id: string, bid: string, notes = "") =>
+    fetch(`/api/projects/${id}/beats/${bid}/source`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes }),
+    }).then(j),
 
-  sourceAll: (id: string, sectionId?: string) =>
-    fetch(`/api/projects/${id}/source-all${sectionId ? `?section_id=${sectionId}` : ""}`,
-      { method: "POST" }).then(j<{ status: string; beats: number }>),
+  sourceAll: (id: string, sectionId?: string, notes = "") =>
+    fetch(`/api/projects/${id}/source-all${sectionId ? `?section_id=${sectionId}` : ""}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes }),
+    }).then(j<{ status: string; beats: number }>),
 
   captureSite: (id: string, bid: string, url: string, highlight?: string) =>
     fetch(`/api/projects/${id}/beats/${bid}/capture`, {

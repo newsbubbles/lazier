@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, render, segmentation, sourcing, storage, transcribe
+from . import config, direction, render, segmentation, sourcing, storage, transcribe
 from .media_probe import probe
 from .models import Beat, Candidate, Clip, Effects, MediaAsset, Project, Section, Suggestion, Transforms
 
@@ -69,6 +69,8 @@ class CreateProject(BaseModel):
     budget_cap: float = 5.0
     rights_posture: str = "anything_goes"
     media_pool_path: Optional[str] = None
+    tone: str = ""
+    reference_date: str = ""
 
 
 class PlaceClip(BaseModel):
@@ -118,7 +120,8 @@ def create_project(body: CreateProject):
     w, h = config.ASPECT_PRESETS[body.aspect_ratio]
     p = Project(name=body.name, aspect_ratio=body.aspect_ratio, width=w, height=h,
                 fps=body.fps, budget_cap=body.budget_cap,
-                rights_posture=body.rights_posture, media_pool_path=body.media_pool_path)
+                rights_posture=body.rights_posture, media_pool_path=body.media_pool_path,
+                tone=body.tone, reference_date=body.reference_date)
     p.ensure_default_tracks()
     storage.save(p)
     return p
@@ -188,6 +191,16 @@ async def transcribe_project(pid: str, merge: bool = True):
             p.segments = segs
             p.sections = sections
             p.beats = beats
+            # video summary (thesis + tone) for the director's context hierarchy
+            await hub.send(pid, {"stage": "segment", "status": "running", "msg": "summarizing"})
+            try:
+                full_text = " ".join(w.text for w in transcript.words)
+                summ = await asyncio.to_thread(direction.summarize_video, full_text)
+                p.video_summary = summ.summary
+                if not p.tone:
+                    p.tone = summ.tone
+            except Exception as e:  # optional director context; surface but don't block
+                await hub.send(pid, {"stage": "source", "msg": f"summary skipped: {type(e).__name__}"})
             # re-transcription invalidates old sourcing: drop suggestions + sourced clips
             p.suggestions = {}
             for t in p.tracks:
@@ -349,6 +362,10 @@ class CaptureBody(BaseModel):
     highlight: Optional[str] = None
 
 
+class SourceBody(BaseModel):
+    notes: str = ""   # Nate's optional direction for this run (user notes for the director)
+
+
 def _beat_filled(project: Project, bid: str) -> bool:
     vt = project.visual_track()
     return bool(vt and any(c.beat_id == bid for c in vt.clips))
@@ -387,51 +404,78 @@ def _emitter(pid: str, loop):
     return ev
 
 
-async def _source_beat_job(pid: str, beat: Beat, loop, mark: bool = True):
-    p = storage.load(pid)
+async def _source_section_beats(pid: str, section: Section, beat_ids: list[str],
+                                notes: str, loop, sem: asyncio.Semaphore):
+    """Run the Visual Director for one section, then source each planned beat."""
     ev = _emitter(pid, loop)
+    p = storage.load(pid)
+    await hub.send(pid, {"stage": "source", "msg": f"directing '{section.topic_label}'…"})
     try:
-        sug, assets = await asyncio.to_thread(sourcing.source_beat, p, beat, ev)
-        await _apply(pid, sug, assets, place=True)
-        await hub.send(pid, {"stage": "source_done", "beat_id": beat.id,
-                             "status": sug.status, "candidates": len(sug.candidates)})
+        plans = await asyncio.to_thread(direction.direct_section, p, section, beat_ids, notes)
     except Exception as e:
-        await _apply(pid, Suggestion(beat_id=beat.id, status="error",
-                                     error=f"{type(e).__name__}: {e}"), [], place=False)
-        await hub.send(pid, {"stage": "error", "beat_id": beat.id, "error": f"{type(e).__name__}: {e}"})
+        for bid in beat_ids:
+            await _apply(pid, Suggestion(beat_id=bid, status="error",
+                                         error=f"director: {type(e).__name__}: {e}"), [], place=False)
+            await hub.send(pid, {"stage": "error", "beat_id": bid, "error": f"director: {e}"})
+        return
+
+    async def one(bid: str):
+        async with sem:
+            beat, plan = p.beat(bid), plans.get(bid)
+            if not beat or not plan:
+                return
+            try:
+                sug, assets = await asyncio.to_thread(sourcing.source_from_plan, p, beat, plan, ev)
+                await _apply(pid, sug, assets, place=True)
+                await hub.send(pid, {"stage": "source_done", "beat_id": bid,
+                                     "status": sug.status, "candidates": len(sug.candidates)})
+            except Exception as e:
+                await _apply(pid, Suggestion(beat_id=bid, status="error", plan=plan,
+                                             error=f"{type(e).__name__}: {e}"), [], place=False)
+                await hub.send(pid, {"stage": "error", "beat_id": bid, "error": f"{type(e).__name__}: {e}"})
+
+    await asyncio.gather(*[one(bid) for bid in beat_ids])
 
 
 @app.post("/api/projects/{pid}/beats/{bid}/source")
-async def source_one_beat(pid: str, bid: str):
+async def source_one_beat(pid: str, bid: str, body: SourceBody = SourceBody()):
     p = _load(pid)
     beat = p.beat(bid)
     if not beat:
         raise HTTPException(404, f"no beat {bid}")
+    section = p.section(beat.section_id)
+    if not section:
+        raise HTTPException(400, "beat has no section")
     p.suggestions[bid] = Suggestion(beat_id=bid, status="sourcing")
     storage.save(p)
-    asyncio.create_task(_source_beat_job(pid, beat, asyncio.get_running_loop()))
+    loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(config.SOURCE_CONCURRENCY)
+    asyncio.create_task(_source_section_beats(pid, section, [bid], body.notes, loop, sem))
     return {"status": "started"}
 
 
 @app.post("/api/projects/{pid}/source-all")
-async def source_all(pid: str, section_id: Optional[str] = None):
-    """Source every empty beat (optionally limited to one chapter)."""
+async def source_all(pid: str, body: SourceBody = SourceBody(), section_id: Optional[str] = None):
+    """Direct + source every empty beat (optionally limited to one chapter)."""
     p = _load(pid)
     targets = [b for b in p.beats if not _beat_filled(p, b.id)
                and (section_id is None or b.section_id == section_id)]
-    loop = asyncio.get_running_loop()
-    sem = asyncio.Semaphore(config.SOURCE_CONCURRENCY)
     for b in targets:
         p.suggestions[b.id] = Suggestion(beat_id=b.id, status="sourcing")
     storage.save(p)
+    loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(config.SOURCE_CONCURRENCY)
 
-    async def one(beat: Beat):
-        async with sem:
-            await _source_beat_job(pid, beat, loop)
+    by_section: dict[str, list[str]] = {}
+    for b in targets:
+        by_section.setdefault(b.section_id, []).append(b.id)
 
     async def job():
         await hub.send(pid, {"stage": "source_all_start", "count": len(targets)})
-        await asyncio.gather(*[one(b) for b in targets])
+        for sid, bids in by_section.items():
+            sec = p.section(sid)
+            if sec:
+                await _source_section_beats(pid, sec, bids, body.notes, loop, sem)
         await hub.send(pid, {"stage": "source_all_done"})
 
     asyncio.create_task(job())

@@ -1,22 +1,19 @@
-"""M2 sourcing pipeline: turn a section's visual brief into ranked clip suggestions.
+"""Sourcer: execute a BeatPlan from the Visual Director. The director decides register +
+content_type + shot_brief + search_terms + time_window (see direction.py); this module
+just fetches candidates for that shot and verifies them AGAINST THE SHOT BRIEF (so a
+metaphor that fulfills the brief scores high even if it doesn't match the words).
 
-Per section: research queries (LLM) -> YouTube search -> fetch+trim top results ->
-vision-verify each -> rank by fit -> Suggestion (recommended + alternates).
-
-Heavy IO (search/fetch/verify) runs here and RETURNS results; the caller applies
-them to the project under a lock and saves. That keeps concurrent source-all runs
-from racing on project.json."""
+Heavy IO runs here and RETURNS results; the caller applies them to the project under a
+lock, so concurrent source-all runs don't race on project.json."""
 
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Callable, Optional
 
-from pydantic import BaseModel
-
 from . import config, serper, storage, vision, webcapture, youtube
-from .agents import run_agent
 from .media_probe import probe
-from .models import Beat, Candidate, MediaAsset, Project, Section, Suggestion
+from .models import Beat, BeatPlan, Candidate, MediaAsset, Project, Suggestion
 
 Event = Callable[[dict], None]
 
@@ -26,54 +23,42 @@ def _emit(on_event: Optional[Event], **kw) -> None:
         on_event(kw)
 
 
-_QSYS = (
-    "You write YouTube search queries to find b-roll for a SPECIFIC MOMENT of narration. "
-    "You get the exact words being spoken right now plus the chapter's overall visual theme. "
-    "Return short, concrete queries (2-5 words) for footage that illustrates THIS moment's "
-    "words (reactive to what is being said), staying consistent with the chapter theme. "
-    "Prefer visual nouns and scenes over abstract words. No punctuation, no quotes."
-)
+# --- time scoping ------------------------------------------------------------
+def _time_bounds(tw: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """A YYYY / YYYY-MM / YYYY-MM-DD window -> (published_after, published_before) RFC3339."""
+    if not tw:
+        return None, None
+    tw = tw.strip()
+    try:
+        if len(tw) == 4:
+            y = int(tw); start, end = _dt.date(y, 1, 1), _dt.date(y, 12, 31)
+        elif len(tw) == 7:
+            y, m = map(int, tw.split("-"))
+            start = _dt.date(y, m, 1)
+            nm = _dt.date(y + (m == 12), 1 if m == 12 else m + 1, 1)
+            end = nm - _dt.timedelta(days=1)
+        elif len(tw) == 10:
+            d = _dt.date.fromisoformat(tw)
+            start, end = d - _dt.timedelta(days=3), d + _dt.timedelta(days=3)
+        else:
+            return None, None
+    except (ValueError, TypeError):
+        return None, None
+    return start.isoformat() + "T00:00:00Z", end.isoformat() + "T23:59:59Z"
 
 
-class _Queries(BaseModel):
-    queries: list[str]
+def _tbs(tw: Optional[str]) -> Optional[str]:
+    a, b = _time_bounds(tw)
+    if not a or not b:
+        return None
+    sa, sb = _dt.date.fromisoformat(a[:10]), _dt.date.fromisoformat(b[:10])
+    return f"cdr:1,cd_min:{sa.month}/{sa.day}/{sa.year},cd_max:{sb.month}/{sb.day}/{sb.year}"
 
 
-def research_queries(beat_text: str, section: Optional[Section]) -> list[str]:
-    theme = (section.visual_brief or section.topic_label) if section else ""
-    user = (f"Moment (spoken now): {beat_text}\nChapter theme: {theme}\n\n"
-            f"Give up to {config.SOURCE_MAX_QUERIES} short search queries for footage "
-            f"matching THIS moment.")
-    out = run_agent(_QSYS, user, _Queries)
-    queries = [q.strip() for q in out.queries if q.strip()]
-    return queries[:config.SOURCE_MAX_QUERIES] or [beat_text[:60]]
-
-
-_WEBSYS = (
-    "Decide whether a narration moment should be illustrated by showing an ACTUAL WEB PAGE "
-    "(news article, scientific paper, blog post, docs, dataset, a specific site) scrolled on "
-    "screen — the way explainer videos show a source. Say relevant=true ONLY when the moment "
-    "clearly references such a source or a claim a real page would back up. Provide a Google "
-    "query to find the page and the exact short phrase to highlight on it."
-)
-
-
-class _WebIntent(BaseModel):
-    relevant: bool
-    query: str = ""
-    highlight: str = ""
-
-
-def web_intent(beat_text: str, section: Optional[Section]) -> _WebIntent:
-    theme = (section.visual_brief or section.topic_label) if section else ""
-    user = (f"Moment: {beat_text}\nChapter theme: {theme}\n\n"
-            "Should this moment show an actual web page? If so give the query + highlight.")
-    return run_agent(_WEBSYS, user, _WebIntent)
-
-
+# --- web capture candidate ---------------------------------------------------
 def _capture_candidate(project: Project, beat: Beat, url: str, title: str,
                        highlight: Optional[str], on_event: Optional[Event],
-                       verify: bool) -> tuple[Candidate, MediaAsset]:
+                       verify: bool, brief: str) -> tuple[Candidate, MediaAsset]:
     pdir = storage.project_dir(project.id)
     clip_len = min(beat.end - beat.start, config.SOURCE_MAX_CLIP_SECONDS)
     asset = MediaAsset(kind="video", origin="web", name=title or url,
@@ -84,7 +69,7 @@ def _capture_candidate(project: Project, beat: Beat, url: str, title: str,
     info = probe(pdir / clip_rel)
     frames = vision.sample_frames(pdir / clip_rel, pdir / "media/frames", n=3)
     if verify:
-        v = vision.verify_fit(frames, beat.text)
+        v = vision.verify_fit(frames, brief)
         score, notes, flags = v["fit_score"], v["notes"], v["flags"]
     else:
         score, notes, flags = 0.85, "page you chose", []
@@ -98,128 +83,103 @@ def _capture_candidate(project: Project, beat: Beat, url: str, title: str,
     return cand, asset
 
 
-def _auto_web(project: Project, beat: Beat, section: Optional[Section],
-              on_event: Optional[Event]) -> tuple[Optional[Candidate], Optional[MediaAsset]]:
-    try:
-        intent = web_intent(beat.text, section)
-    except Exception:
-        return None, None
-    if not intent.relevant:
-        return None, None
-    query = intent.query.strip() or beat.text[:50]
-    highlight = intent.highlight.strip() or None
-    _emit(on_event, beat_id=beat.id, msg=f"web intent: {query}")
-    try:
-        results = serper.search(query, num=4)
-    except Exception as e:
-        _emit(on_event, beat_id=beat.id, msg=f"web search failed: {e}")
-        return None, None
-    for r in results:
-        try:
-            return _capture_candidate(project, beat, r["url"], r["title"], highlight, on_event, verify=True)
-        except youtube.SourcingError as e:
-            _emit(on_event, beat_id=beat.id, msg=f"skip site: {e.reason}")
-            continue
-    return None, None
-
-
-def capture_url(project: Project, beat: Beat, url: str,
-                highlight: Optional[str] = None) -> tuple[Suggestion, list[MediaAsset]]:
-    """Manual per-beat capture: the user gave us a URL, so capture and front-rank it."""
-    cand, asset = _capture_candidate(project, beat, url, url, highlight, None, verify=False)
-    existing = project.suggestions.get(beat.id)
-    cands = ([cand] + existing.candidates) if existing else [cand]
-    sug = Suggestion(beat_id=beat.id, status="ready", candidates=cands, recommended_index=0,
-                     queries=(existing.queries if existing else []))
-    return sug, [asset]
-
-
-def source_beat(project: Project, beat: Beat,
-                on_event: Optional[Event] = None) -> tuple[Suggestion, list[MediaAsset]]:
+# --- execute a plan ----------------------------------------------------------
+def source_from_plan(project: Project, beat: Beat, plan: BeatPlan,
+                     on_event: Optional[Event] = None) -> tuple[Suggestion, list[MediaAsset]]:
     bid = beat.id
     if project.rights_posture == "commercial_safe":
-        return (Suggestion(beat_id=bid, status="error",
-                           error="commercial_safe: YouTube is uncleared and no stock sources "
-                                 "are wired yet (M4). Switch the project to anything_goes."),
-                [])
+        return (Suggestion(beat_id=bid, status="error", plan=plan,
+                           error="commercial_safe: YouTube/web are uncleared and no stock "
+                                 "sources are wired yet. Switch to anything_goes."), [])
 
-    section = project.section(beat.section_id)
     pdir = storage.project_dir(project.id)
-    beat_len = beat.end - beat.start
-    clip_len = min(beat_len, config.SOURCE_MAX_CLIP_SECONDS)
-    brief = beat.text
-
-    _emit(on_event, beat_id=bid, msg="researching queries")
-    queries = research_queries(beat.text, section)
-    _emit(on_event, beat_id=bid, msg=f"queries: {', '.join(queries)}")
+    clip_len = min(beat.end - beat.start, config.SOURCE_MAX_CLIP_SECONDS)
+    brief = plan.shot_brief or beat.text
+    terms = plan.search_terms or [beat.text[:60]]
+    _emit(on_event, beat_id=bid, msg=f"[{plan.visual_register}/{plan.content_type}] {brief[:50]}")
 
     assets: list[MediaAsset] = []
     candidates: list[Candidate] = []
-    seen: set[str] = set()
 
-    for q in queries:
-        if len(candidates) >= config.SOURCE_MAX_CANDIDATES:
-            break
-        try:
-            results = youtube.search(q, max_results=4, duration="short")
-        except youtube.SourcingError as e:
-            _emit(on_event, beat_id=bid, msg=f"search failed: {e.reason}")
-            continue
-
-        for r in results:
+    if plan.content_type == "web":
+        tbs = _tbs(plan.time_window)
+        for q in terms:
+            if candidates:
+                break
+            try:
+                results = serper.search(q, num=4, tbs=tbs)
+            except Exception as e:
+                _emit(on_event, beat_id=bid, msg=f"web search failed: {e}")
+                continue
+            for r in results:
+                try:
+                    cand, asset = _capture_candidate(project, beat, r["url"], r["title"],
+                                                     brief, on_event, verify=True, brief=brief)
+                    candidates.append(cand); assets.append(asset)
+                    break
+                except youtube.SourcingError as e:
+                    _emit(on_event, beat_id=bid, msg=f"skip site: {e.reason}")
+                    continue
+    else:  # youtube
+        after, before = _time_bounds(plan.time_window)
+        seen: set[str] = set()
+        for q in terms:
             if len(candidates) >= config.SOURCE_MAX_CANDIDATES:
                 break
-            vid = r["video_id"]
-            if vid in seen:
-                continue
-            seen.add(vid)
-
-            asset = MediaAsset(kind="video", origin="youtube", name=r["title"],
-                               source_url=r["url"], license="youtube_uncleared", quarantined=True)
-            clip_rel = f"media/sourced/{asset.id}.mp4"
-            _emit(on_event, beat_id=bid, msg=f"fetching: {r['title'][:50]}")
             try:
-                youtube.fetch_clip(vid, clip_len, pdir / clip_rel)
+                results = youtube.search(q, max_results=4, duration="short",
+                                         published_after=after, published_before=before)
             except youtube.SourcingError as e:
-                _emit(on_event, beat_id=bid, msg=f"skip: {e.reason}")
+                _emit(on_event, beat_id=bid, msg=f"search failed: {e.reason}")
                 continue
-
-            info = probe(pdir / clip_rel)
-            frames = vision.sample_frames(pdir / clip_rel, pdir / "media/frames", n=3)
-            _emit(on_event, beat_id=bid, msg=f"verifying: {r['title'][:50]}")
-            verdict = vision.verify_fit(frames, brief)
-
-            asset.local_path = clip_rel
-            asset.duration = clip_len
-            asset.width, asset.height = info["width"], info["height"]
-            asset.verify_score = verdict["fit_score"]
-            assets.append(asset)
-
-            thumb_rel = f"media/frames/{frames[0].name}" if frames else ""
-            candidates.append(Candidate(
-                asset_id=asset.id, source="youtube", title=r["title"],
-                rationale=verdict["notes"], fit_score=verdict["fit_score"],
-                thumb=thumb_rel, flags=verdict["flags"], quarantined=True,
-            ))
-            _emit(on_event, beat_id=bid,
-                  msg=f"fit={verdict['fit_score']:.2f}: {r['title'][:50]}")
-
-    # auto-offer a web-capture candidate when the moment references a real source
-    if config.WEB_CAPTURE_AUTO:
-        try:
-            wcand, wasset = _auto_web(project, beat, section, on_event)
-            if wcand and wasset:
-                candidates.append(wcand)
-                assets.append(wasset)
-                _emit(on_event, beat_id=bid, msg=f"web fit={wcand.fit_score:.2f}: {wcand.title[:40]}")
-        except Exception as e:
-            _emit(on_event, beat_id=bid, msg=f"web capture error: {e}")
+            for r in results:
+                if len(candidates) >= config.SOURCE_MAX_CANDIDATES:
+                    break
+                vid = r["video_id"]
+                if vid in seen:
+                    continue
+                seen.add(vid)
+                asset = MediaAsset(kind="video", origin="youtube", name=r["title"],
+                                   source_url=r["url"], license="youtube_uncleared", quarantined=True)
+                clip_rel = f"media/sourced/{asset.id}.mp4"
+                _emit(on_event, beat_id=bid, msg=f"fetching: {r['title'][:44]}")
+                try:
+                    youtube.fetch_clip(vid, clip_len, pdir / clip_rel)
+                except youtube.SourcingError as e:
+                    _emit(on_event, beat_id=bid, msg=f"skip: {e.reason}")
+                    continue
+                info = probe(pdir / clip_rel)
+                frames = vision.sample_frames(pdir / clip_rel, pdir / "media/frames", n=3)
+                verdict = vision.verify_fit(frames, brief)
+                asset.local_path = clip_rel
+                asset.duration = clip_len
+                asset.width, asset.height = info["width"], info["height"]
+                asset.verify_score = verdict["fit_score"]
+                assets.append(asset)
+                thumb_rel = f"media/frames/{frames[0].name}" if frames else ""
+                candidates.append(Candidate(
+                    asset_id=asset.id, source="youtube", title=r["title"],
+                    rationale=verdict["notes"], fit_score=verdict["fit_score"],
+                    thumb=thumb_rel, flags=verdict["flags"], quarantined=True))
+                _emit(on_event, beat_id=bid, msg=f"fit={verdict['fit_score']:.2f}: {r['title'][:40]}")
 
     candidates.sort(key=lambda c: c.fit_score, reverse=True)
     if candidates:
-        sug = Suggestion(beat_id=bid, status="ready", candidates=candidates,
-                         recommended_index=0, queries=queries)
-    else:
-        sug = Suggestion(beat_id=bid, status="error", queries=queries,
-                         error="no usable clips found; try a different moment phrasing")
-    return sug, assets
+        return Suggestion(beat_id=bid, status="ready", plan=plan, candidates=candidates,
+                          recommended_index=0, queries=terms), assets
+    return Suggestion(beat_id=bid, status="error", plan=plan, queries=terms,
+                      error="no usable media found for this shot; tweak notes or re-source"), assets
+
+
+# --- manual per-beat URL capture ---------------------------------------------
+def capture_url(project: Project, beat: Beat, url: str,
+                highlight: Optional[str] = None) -> tuple[Suggestion, list[MediaAsset]]:
+    cand, asset = _capture_candidate(project, beat, url, url, highlight, None,
+                                     verify=False, brief=beat.text)
+    existing = project.suggestions.get(beat.id)
+    cands = ([cand] + existing.candidates) if existing else [cand]
+    plan = (existing.plan if existing and existing.plan
+            else BeatPlan(visual_register="evidence", content_type="web", shot_brief=beat.text))
+    sug = Suggestion(beat_id=beat.id, status="ready", plan=plan, candidates=cands,
+                     recommended_index=0)
+    return sug, [asset]

@@ -3,21 +3,23 @@ import { api } from "../lib/api";
 import type { Beat, Project } from "../lib/types";
 
 export function SuggestionPanel({
-  project, beat, onChanged, busy,
+  project, beat, notes, onChanged, busy,
 }: {
   project: Project;
   beat: Beat;
+  notes: string;
   onChanged: (p?: Project) => void;
   busy: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
   const sug = project.suggestions?.[beat.id];
+  const plan = sug?.plan;
   const section = project.sections.find((s) => s.id === beat.section_id);
   const filledClip = project.tracks.find((t) => t.kind === "visual")
     ?.clips.find((c) => c.beat_id === beat.id);
 
-  const find = async () => { await api.sourceBeat(project.id, beat.id); onChanged(); };
+  const find = async () => { await api.sourceBeat(project.id, beat.id, notes); onChanged(); };
   const use = async (idx: number) => onChanged(await api.acceptCandidate(project.id, beat.id, idx));
   const capture = async () => {
     if (!url.trim()) return;
@@ -42,7 +44,15 @@ export function SuggestionPanel({
         <div className="sp-time">{beat.start.toFixed(1)}s – {beat.end.toFixed(1)}s</div>
       </div>
       <div className="sp-transcript">“{beat.text}”</div>
-      {section?.visual_brief && <div className="sp-brief">chapter theme: {section.visual_brief}</div>}
+      {plan && (
+        <div className="sp-plan">
+          <span className="pill reg">{plan.visual_register}</span>
+          <span className="pill">{plan.content_type}</span>
+          {plan.time_window && <span className="pill">{plan.time_window}</span>}
+          <div className="sp-shot">🎬 {plan.shot_brief}</div>
+        </div>
+      )}
+      {!plan && section?.visual_brief && <div className="sp-brief">chapter theme: {section.visual_brief}</div>}
 
       <div className="row" style={{ margin: "10px 0", gap: 8 }}>
         <button className="primary" onClick={find} disabled={busy || sug?.status === "sourcing"}>

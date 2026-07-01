@@ -7,6 +7,8 @@ export function ProjectList({ onOpen }: { onOpen: (id: string) => void }) {
   const [name, setName] = useState("");
   const [aspect, setAspect] = useState("16:9");
   const [posture, setPosture] = useState("anything_goes");
+  const [tone, setTone] = useState("");
+  const [refDate, setRefDate] = useState("");
   const [err, setErr] = useState("");
 
   const refresh = () => api.listProjects().then(setProjects).catch((e) => setErr(e.message));
@@ -17,7 +19,7 @@ export function ProjectList({ onOpen }: { onOpen: (id: string) => void }) {
     try {
       const p = await api.createProject({
         name: name || "untitled", aspect_ratio: aspect, fps: 30,
-        budget_cap: 5, rights_posture: posture,
+        budget_cap: 5, rights_posture: posture, tone, reference_date: refDate,
       });
       onOpen(p.id);
     } catch (e: any) { setErr(e.message); }
@@ -56,6 +58,16 @@ export function ProjectList({ onOpen }: { onOpen: (id: string) => void }) {
               <option value="anything_goes">anything goes (label uncleared)</option>
               <option value="commercial_safe">commercial safe only</option>
             </select>
+          </div>
+          <div className="field">
+            <label>Tone / style (optional — director's guide)</label>
+            <input value={tone} onChange={(e) => setTone(e.target.value)}
+                   placeholder="e.g. dry comedic essay, meme-heavy" />
+          </div>
+          <div className="field">
+            <label>Reference date (optional — for news timing)</label>
+            <input value={refDate} onChange={(e) => setRefDate(e.target.value)}
+                   placeholder="YYYY-MM-DD or leave blank" />
           </div>
           <div className="field" style={{ justifyContent: "flex-end" }}>
             <button className="primary" onClick={create}>Create &amp; open</button>

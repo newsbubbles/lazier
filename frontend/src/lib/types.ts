@@ -27,9 +27,14 @@ export interface Candidate {
   asset_id: string; source: string; title: string; rationale: string;
   fit_score: number; thumb: string; flags: string[]; quarantined: boolean;
 }
+export interface BeatPlan {
+  visual_register: string; content_type: string; shot_brief: string;
+  search_terms: string[]; time_window: string | null; rationale: string;
+}
 export interface Suggestion {
   id: string; beat_id: string;
   status: "sourcing" | "ready" | "error" | "empty";
+  plan: BeatPlan | null;
   candidates: Candidate[]; recommended_index: number; error: string; queries: string[];
 }
 
@@ -52,6 +57,7 @@ export interface Project {
   width: number; height: number; fps: number; created_at: number;
   audio_asset_id: string | null; budget_cap: number;
   rights_posture: string; media_pool_path: string | null;
+  tone: string; reference_date: string; video_summary: string;
   assets: Record<string, MediaAsset>;
   transcript: Transcript | null;
   segments: Segment[]; sections: Section[]; beats: Beat[];
