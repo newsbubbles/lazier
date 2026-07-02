@@ -141,7 +141,15 @@ def source_from_plan(project: Project, beat: Beat, plan: BeatPlan,
     else:  # youtube
         after, before = _time_bounds(plan.time_window)
         seen: set[str] = set()
+        # director's terms first, then a broadened fallback (first 3 words) so an over-
+        # specific query ("magician misdirection trick close up smirk" -> 0 hits) still
+        # finds b-roll by falling back to its core keywords.
+        queries = list(terms)
         for q in terms:
+            b = " ".join(q.split()[:3])
+            if b and b != q and b not in queries:
+                queries.append(b)
+        for q in queries:
             if len(candidates) >= config.SOURCE_MAX_CANDIDATES:
                 break
             try:
