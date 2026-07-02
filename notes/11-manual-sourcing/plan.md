@@ -77,10 +77,29 @@ pass. Decision needed before building: do we want true in-beat sequencing, or is
 "candidates you switch between" enough? (My rec: ship additive-candidates now, revisit
 sequencing when tiling lands.)
 
+## Feature 4 — Per-beat guidance text for "Find clips"
+Today "Find clips" reuses the GLOBAL director-notes textarea: the Editor passes `notes` into
+`api.sourceBeat` → `/beats/{bid}/source` → `direct_section(..., user_notes=notes)`, and the
+director already folds `USER NOTES` into its context. So the plumbing to pass free-text
+guidance PER SOURCE CALL already exists. The only gap is UI — there's no per-beat box, so a
+beat can't get guidance distinct from the whole-project note (e.g. "use an actual clip of the
+politician, not a metaphor" for just this one moment).
+
+Add a small text input in the panel next to Find clips ("guidance for this beat…"):
+- When filled, it's the guidance for THAT beat's source call.
+- **Merge strategy (recommended): combine** the project-level notes (vibe/tone, applies to
+  all) with the beat-specific line, e.g. `f"{global_notes}\n\nThis beat: {beat_notes}"`, so
+  the beat guidance SHARPENS rather than discards the global intent. (Alternative:
+  beat-note-only when present — but merge keeps global tone in play.)
+- Persistence: v1 ephemeral (panel state for the session). Later could store the note on the
+  Beat/Suggestion so a re-source remembers it and the Inspector can show what was asked.
+- Effort ~1 hr: pure UI + threading the string; `direct_section` already consumes it.
+
 ## UI changes (SuggestionPanel)
 - Relabel the URL box: "paste a YouTube link or any site URL…"; help text explains YT =
   direct clip at its timestamp, site = scroll-capture.
 - Image uploads: "slow zoom" toggle (default on).
+- A small "guidance for this beat…" input next to Find clips (Feature 4).
 - Keep the additive candidate cards; the newly added URL/upload shows up as a card and is
   auto-placed.
 
@@ -89,7 +108,8 @@ Small-to-medium, because the hard parts exist:
 1. YT URL parse + `clip_youtube_url` + endpoint routing (~half day). Biggest value +
    quota relief.
 2. Image ken-burns flag + toggle (~1 hr).
-3. Panel relabel/wiring (~1 hr).
+3. Per-beat "Find clips" guidance input (~1 hr; plumbing already exists).
+4. Panel relabel/wiring (~1 hr).
 Defer: true in-beat multi-clip sequencing (needs tiling + a design decision).
 
 ## Ties to other notes
