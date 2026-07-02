@@ -1,16 +1,21 @@
-"""YouTube sourcing: search via the Data API, fetch+trim via yt-dlp.
-Two separate tools per the design — API for discovery, yt-dlp for the clip."""
+"""YouTube sourcing: search AND fetch via yt-dlp — no Data API, no quota.
+
+Search used to hit the YouTube Data API (search.list = 100 quota units, ~100 searches/day
+total — one long video could exhaust it). yt-dlp's `ytsearch` scrapes the same results with
+no key and no quota. Results are cached on disk so repeat topics across videos (and repeated
+queries within one run) cost nothing. See notes/09 + the manual-sourcing plan."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
+import time
 from pathlib import Path
-
-import httpx
 
 from . import config
 
-SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+_SEARCH_TTL = 14 * 86400  # cache a query's results for two weeks
 
 
 class SourcingError(RuntimeError):
@@ -21,41 +26,82 @@ class SourcingError(RuntimeError):
         self.next = nxt
 
 
+# --- search cache (also the dedupe: a repeated query is a cache hit, not a new search) ----
+def _cache_dir() -> Path:
+    d = config.WORKSPACE / "_cache" / "ytsearch"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _cache_key(query: str, n: int) -> str:
+    return hashlib.sha1(f"{n}|{query.strip().lower()}".encode("utf-8")).hexdigest()
+
+
+def _cache_get(query: str, n: int):
+    f = _cache_dir() / f"{_cache_key(query, n)}.json"
+    if not f.exists():
+        return None
+    try:
+        obj = json.loads(f.read_text(encoding="utf-8"))   # our own cache file, not LLM output
+    except (ValueError, OSError):
+        return None
+    if time.time() - obj.get("ts", 0) > _SEARCH_TTL:
+        return None
+    return obj.get("results")
+
+
+def _cache_put(query: str, n: int, results: list[dict]) -> None:
+    try:
+        (_cache_dir() / f"{_cache_key(query, n)}.json").write_text(
+            json.dumps({"ts": time.time(), "query": query, "results": results}),
+            encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _clean(v: str) -> str:
+    return "" if v.strip() == "NA" else v.strip()
+
+
 def search(query: str, max_results: int = 5, duration: str = "short",
            published_after: str | None = None, published_before: str | None = None) -> list[dict]:
-    """Return lightweight candidate handles, never media. duration: short|medium|any.
-    published_after/before are RFC3339 (e.g. 2025-06-01T00:00:00Z) for time-scoped news."""
-    if not config.YOUTUBE_API_KEY:
-        raise SourcingError("YOUTUBE_API_KEY not set",
-                            "add the key to D:\\lazier\\.env, or source from stock (M4)")
-    params = {
-        "key": config.YOUTUBE_API_KEY, "q": query, "part": "snippet", "type": "video",
-        "maxResults": max_results, "videoEmbeddable": "true", "safeSearch": "moderate",
-    }
-    if duration in ("short", "medium", "long"):
-        params["videoDuration"] = duration
-    if published_after:
-        params["publishedAfter"] = published_after
-    if published_before:
-        params["publishedBefore"] = published_before
-    r = httpx.get(SEARCH_URL, params=params, timeout=20)
-    if r.status_code == 403:
-        raise SourcingError(f"YouTube API rejected the request ({r.text[:120]})",
-                            "likely daily quota exhausted (100 searches/day) — retry tomorrow or raise quota")
-    r.raise_for_status()
-    out = []
-    for item in r.json().get("items", []):
-        vid = item.get("id", {}).get("videoId")
-        sn = item.get("snippet", {})
-        if not vid:
+    """Return lightweight candidate handles via yt-dlp (no key, no quota), cached 14d.
+
+    `duration` and `published_*` are kept for call-site compatibility. ytsearch has no
+    date-range filter, so `published_*` only flips ordering to by-date (`ytsearchdate`);
+    `duration` is ignored (we only download a SECTION anyway). See notes/09."""
+    n = max(int(max_results), 1)
+    cached = _cache_get(query, n)
+    if cached is not None:
+        return cached
+
+    prefix = "ytsearchdate" if (published_after or published_before) else "ytsearch"
+    cmd = ["yt-dlp", f"{prefix}{n}:{query}", "--flat-playlist", "--no-warnings", "--quiet",
+           "--print", "%(id)s\t%(title)s\t%(channel)s"]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise SourcingError("yt-dlp search timed out",
+                            "retry, refine the query, or paste a YouTube URL directly")
+    if res.returncode != 0:
+        tail = " ".join((res.stderr or res.stdout).strip().splitlines()[-2:])
+        raise SourcingError(f"yt-dlp search failed: {tail[:160]}",
+                            "retry, refine the query, or paste a YouTube URL directly")
+
+    out: list[dict] = []
+    for line in res.stdout.splitlines():
+        parts = line.split("\t")
+        vid = parts[0].strip() if parts else ""
+        if not vid or vid == "NA":
             continue
         out.append({
             "video_id": vid,
-            "title": sn.get("title", ""),
-            "channel": sn.get("channelTitle", ""),
-            "thumb_url": sn.get("thumbnails", {}).get("medium", {}).get("url", ""),
+            "title": _clean(parts[1]) if len(parts) > 1 else "",
+            "channel": _clean(parts[2]) if len(parts) > 2 else "",
+            "thumb_url": f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg",
             "url": f"https://www.youtube.com/watch?v={vid}",
         })
+    _cache_put(query, n, out)
     return out
 
 
