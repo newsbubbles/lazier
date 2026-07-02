@@ -57,6 +57,22 @@ export function Timeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl]);
 
+  // spacebar toggles play/pause (unless you're typing in a field or on a button, which
+  // already handle space themselves).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "Space" && e.key !== " ") return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" || el?.isContentEditable) return;
+      if (!wsRef.current) return;
+      e.preventDefault();
+      wsRef.current.playPause();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   // ctrl+wheel = zoom (anchored under the mouse); plain wheel = horizontal pan.
   // Native non-passive listener so we can preventDefault the page scroll.
   useEffect(() => {
