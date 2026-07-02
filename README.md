@@ -10,6 +10,12 @@ building from a blank timeline.
 It's the lazy path to a properly-edited faceless / explainer / b-roll video: the least
 work for you, the highest-quality cut out.
 
+![The lazier editor](img/Screenshot_24.png)
+
+*Audio spine and auto-assemble on the left, the live preview and word-aligned timeline in
+the center, per-beat clip options on the right — here a pasted YouTube clip sits recommended
+for the moment.*
+
 ## The problem it solves
 
 Editing a talking video is mostly grunt work: transcribing, chopping the audio into
