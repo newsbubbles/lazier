@@ -1,15 +1,17 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import type { Beat, Project } from "../lib/types";
+import type { Beat, Candidate, Project } from "../lib/types";
 
 export function SuggestionPanel({
-  project, beat, notes, onChanged, busy,
+  project, beat, notes, onChanged, busy, cursor, playing,
 }: {
   project: Project;
   beat: Beat;
   notes: string;
   onChanged: (p?: Project) => void;
   busy: boolean;
+  cursor: number;
+  playing: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
@@ -98,7 +100,7 @@ export function SuggestionPanel({
           return (
             <div key={c.asset_id} className={`cand ${isPlaced ? "placed" : ""}`}>
               <div className="cand-thumb">
-                {c.thumb && <img src={api.fileUrl(project.id, c.thumb)} alt="" />}
+                <CandidateThumb project={project} c={c} beat={beat} cursor={cursor} playing={playing} />
                 <span className="fit">{Math.round(c.fit_score * 100)}%</span>
                 {isRec && <span className="rec">recommended</span>}
               </div>
@@ -127,4 +129,41 @@ export function SuggestionPanel({
       )}
     </div>
   );
+}
+
+// A candidate's preview: static thumbnail when the playhead is elsewhere, but a LIVE video
+// synced to the timeline cursor's position within this beat while the playhead is inside it —
+// so every option animates in lockstep with the timeline (same trick as the main viewport).
+function CandidateThumb({ project, c, beat, cursor, playing }: {
+  project: Project; c: Candidate; beat: Beat; cursor: number; playing: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const asset = project.assets[c.asset_id];
+  const isVideo = !!asset && asset.kind === "video" && !!asset.local_path;
+  const inBeat = cursor >= beat.start && cursor <= beat.end;
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !isVideo) return;
+    if (!inBeat) { v.pause(); return; }
+    const dur = asset!.duration || 0;
+    let t = cursor - beat.start;               // seconds into the beat = seconds into the clip
+    if (dur > 0) t = Math.min(t, dur - 0.05);  // clamp: clip may be shorter than the beat
+    t = Math.max(0, t);
+    const tol = playing ? 0.3 : 0.05;          // don't fight playback; snap when scrubbing
+    if (Math.abs(v.currentTime - t) > tol) v.currentTime = t;
+    if (playing) v.play().catch(() => {}); else v.pause();
+  }, [cursor, playing, inBeat, isVideo, beat.start, asset?.duration]);
+
+  if (isVideo) {
+    return (
+      <>
+        {!inBeat && c.thumb && <img src={api.fileUrl(project.id, c.thumb)} alt="" />}
+        <video ref={videoRef} src={api.fileUrl(project.id, asset!.local_path)}
+               muted playsInline preload="auto"
+               style={{ display: inBeat ? "block" : "none" }} />
+      </>
+    );
+  }
+  return c.thumb ? <img src={api.fileUrl(project.id, c.thumb)} alt="" /> : null;
 }

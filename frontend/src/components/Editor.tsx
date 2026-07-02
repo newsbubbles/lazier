@@ -220,7 +220,8 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
 
         <div className={`sugcol${rightOpen ? " open" : ""}`}>
           {beatObj
-            ? <SuggestionPanel project={project} beat={beatObj} notes={notes} busy={!!busy} onChanged={reload} />
+            ? <SuggestionPanel project={project} beat={beatObj} notes={notes} busy={!!busy}
+                               onChanged={reload} cursor={cursor} playing={playing} />
             : <div className="sp-empty muted">Click a beat on the timeline to see clip suggestions for that moment, or hit Auto-source all beats.</div>}
         </div>
       </div>
