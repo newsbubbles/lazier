@@ -118,8 +118,13 @@ def main() -> None:
 
         page.evaluate(f"window.scrollTo(0, {start_scroll})")
         page.wait_for_timeout(250)
-        t_scroll = time.monotonic() - t_rec        # trim everything before the shot
-        steps = max(int(seconds * 25), 12)
+        t_scroll = time.monotonic() - t_rec        # trim everything before the shot (dwell IN)
+        # Dwell on the readable top/start for ~20% of the clip before panning, so the beat
+        # doesn't open mid-motion. Then ease-scroll over the remaining time.
+        hold = seconds * 0.20
+        scroll_secs = max(seconds - hold, 0.5)
+        page.wait_for_timeout(int(hold * 1000))
+        steps = max(int(scroll_secs * 25), 12)
         for i in range(steps + 1):
             y = start_scroll + (end_scroll - start_scroll) * _ease(i / steps)
             page.evaluate(f"window.scrollTo(0, {y})")

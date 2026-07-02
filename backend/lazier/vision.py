@@ -41,8 +41,11 @@ _SYSTEM = (
     "You verify whether b-roll footage fits a narration moment. You are shown a few frames "
     "sampled from one video clip and a 'visual brief' describing what should be on screen. "
     "Score the fit 0..1 and flag problems. Be strict: a clip only loosely related scores low. "
+    "HARD FAIL (fit_score at or near 0, flag 'not_content') when the frames are NOT real "
+    "content but a login/sign-in wall, a cookie/consent banner, a paywall, an error or "
+    "'access denied' page, a blank/placeholder, or mostly browser/UI chrome. "
     "Valid flags: has_watermark, has_burned_text, letterboxed, low_quality, off_topic, "
-    "people_talking."
+    "people_talking, not_content."
 )
 
 

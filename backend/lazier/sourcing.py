@@ -10,12 +10,26 @@ from __future__ import annotations
 
 import datetime as _dt
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 from . import config, serper, storage, vision, webcapture, youtube
 from .media_probe import probe
 from .models import Beat, BeatPlan, Candidate, MediaAsset, Project, Suggestion
 
 Event = Callable[[dict], None]
+
+# Domains that serve a login wall or hard paywall instead of the content — never scroll-
+# capture these (we'd just screenshot a sign-in modal or a paywall). See notes/09.
+_BLOCKED_DOMAINS = (
+    "facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "tiktok.com",
+    "pinterest.com", "quora.com", "reddit.com",
+    "wsj.com", "ft.com", "nytimes.com", "bloomberg.com", "medium.com",
+)
+
+
+def _blocked_domain(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    return any(host == d or host.endswith("." + d) for d in _BLOCKED_DOMAINS)
 
 
 def _emit(on_event: Optional[Event], **kw) -> None:
@@ -111,6 +125,10 @@ def source_from_plan(project: Project, beat: Beat, plan: BeatPlan,
             except Exception as e:
                 _emit(on_event, beat_id=bid, msg=f"web search failed: {e}")
                 continue
+            blocked = [r for r in results if _blocked_domain(r.get("url", ""))]
+            results = [r for r in results if not _blocked_domain(r.get("url", ""))]
+            if blocked:
+                _emit(on_event, beat_id=bid, msg=f"skipped {len(blocked)} login/paywall domain(s)")
             for r in results:
                 try:
                     cand, asset = _capture_candidate(project, beat, r["url"], r["title"],
