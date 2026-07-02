@@ -171,6 +171,52 @@ def source_from_plan(project: Project, beat: Beat, plan: BeatPlan,
                       error="no usable media found for this shot; tweak notes or re-source"), assets
 
 
+# --- manual per-beat: paste a YouTube URL (quota-free, direct clip) -----------
+def clip_youtube_url(project: Project, beat: Beat, url: str,
+                     on_event: Optional[Event] = None) -> tuple[Suggestion, list[MediaAsset]]:
+    """Clip a pasted YouTube URL directly at its timestamp — NO search.list call, so no
+    quota. Additive to the beat's candidates (like capture_url); verify is skipped because
+    the user chose it. `fetch_clip` already supports the start offset."""
+    parsed = youtube.parse_youtube_url(url)
+    if not parsed:
+        raise youtube.SourcingError("not a valid YouTube URL",
+                                    "check the link, or paste a site URL to scroll-capture it")
+    video_id, start_at = parsed
+    pdir = storage.project_dir(project.id)
+    clip_len = min(beat.end - beat.start, config.SOURCE_MAX_CLIP_SECONDS)
+    asset = MediaAsset(kind="video", origin="youtube", name=f"YouTube {video_id}",
+                       source_url=url, license="youtube_uncleared", quarantined=True)
+    clip_rel = f"media/sourced/{asset.id}.mp4"
+    _emit(on_event, beat_id=beat.id, msg=f"clipping youtube {video_id} @ {start_at:.0f}s")
+    youtube.fetch_clip(video_id, clip_len, pdir / clip_rel, start_at=start_at)
+    info = probe(pdir / clip_rel)
+    frames = vision.sample_frames(pdir / clip_rel, pdir / "media/frames", n=1)
+    asset.local_path = clip_rel
+    asset.duration = clip_len
+    asset.width, asset.height = info["width"], info["height"]
+    asset.verify_score = 0.85
+    thumb_rel = f"media/frames/{frames[0].name}" if frames else ""
+    cand = Candidate(asset_id=asset.id, source="youtube", title=asset.name,
+                     rationale=f"pasted by you (from {start_at:.0f}s)", fit_score=0.85,
+                     thumb=thumb_rel, flags=[], quarantined=True)
+    existing = project.suggestions.get(beat.id)
+    cands = ([cand] + existing.candidates) if existing else [cand]
+    plan = (existing.plan if existing and existing.plan
+            else BeatPlan(visual_register="literal", content_type="youtube", shot_brief=beat.text))
+    sug = Suggestion(beat_id=beat.id, status="ready", plan=plan, candidates=cands,
+                     recommended_index=0)
+    return sug, [asset]
+
+
+def capture_from_url(project: Project, beat: Beat, url: str, highlight: Optional[str] = None,
+                     on_event: Optional[Event] = None) -> tuple[Suggestion, list[MediaAsset]]:
+    """One paste box, two behaviors: a YouTube link is clipped directly at its timestamp;
+    anything else is scroll-captured as a page."""
+    if youtube.parse_youtube_url(url):
+        return clip_youtube_url(project, beat, url, on_event)
+    return capture_url(project, beat, url, highlight)
+
+
 # --- manual per-beat URL capture ---------------------------------------------
 def capture_url(project: Project, beat: Beat, url: str,
                 highlight: Optional[str] = None) -> tuple[Suggestion, list[MediaAsset]]:

@@ -13,13 +13,20 @@ export function SuggestionPanel({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
+  const [beatNote, setBeatNote] = useState("");   // per-beat guidance for Find clips
+  const [zoom, setZoom] = useState(true);          // slow-zoom uploaded stills
   const sug = project.suggestions?.[beat.id];
   const plan = sug?.plan;
   const section = project.sections.find((s) => s.id === beat.section_id);
   const filledClip = project.tracks.find((t) => t.kind === "visual")
     ?.clips.find((c) => c.beat_id === beat.id);
 
-  const find = async () => { await api.sourceBeat(project.id, beat.id, notes); onChanged(); };
+  const find = async () => {
+    // global director notes + this beat's optional steer (merge, so global tone still applies)
+    const guidance = [notes, beatNote.trim() && `This beat: ${beatNote.trim()}`]
+      .filter(Boolean).join("\n\n");
+    await api.sourceBeat(project.id, beat.id, guidance); onChanged();
+  };
   const use = async (idx: number) => onChanged(await api.acceptCandidate(project.id, beat.id, idx));
   const capture = async () => {
     if (!url.trim()) return;
@@ -32,6 +39,7 @@ export function SuggestionPanel({
     await api.placeClip(project.id, {
       track_id: project.tracks.find((t) => t.kind === "visual")!.id,
       asset_id: asset.id, timeline_start: beat.start, timeline_end: beat.end,
+      ken_burns: zoom,   // backend applies it only to stills
     });
     onChanged();
   };
@@ -54,7 +62,10 @@ export function SuggestionPanel({
       )}
       {!plan && section?.visual_brief && <div className="sp-brief">chapter theme: {section.visual_brief}</div>}
 
-      <div className="row" style={{ margin: "10px 0", gap: 8 }}>
+      <input value={beatNote} onChange={(e) => setBeatNote(e.target.value)}
+             style={{ width: "100%", fontSize: 12, marginTop: 10 }}
+             placeholder="guidance for this beat (optional): steer the finder for this moment…" />
+      <div className="row" style={{ margin: "8px 0 4px", gap: 8 }}>
         <button className="primary" onClick={find} disabled={busy || sug?.status === "sourcing"}>
           {sug?.candidates?.length ? "↻ Re-source" : "🔎 Find clips"}
         </button>
@@ -62,15 +73,19 @@ export function SuggestionPanel({
         <input ref={fileRef} type="file" accept="video/*,image/*" hidden
                onChange={(e) => e.target.files?.[0] && uploadOwn(e.target.files[0])} />
       </div>
+      <label className="muted" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginBottom: 8 }}>
+        <input type="checkbox" checked={zoom} onChange={(e) => setZoom(e.target.checked)} style={{ width: "auto" }} />
+        slow zoom on uploaded images
+      </label>
 
       <div className="capture-row">
-        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="paste a URL to scroll-capture a site…"
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="paste a YouTube link or a site URL…"
                onKeyDown={(e) => e.key === "Enter" && capture()} />
-        <button onClick={capture} disabled={busy || !url.trim()}>🌐 Capture</button>
+        <button onClick={capture} disabled={busy || !url.trim()}>➕ Add</button>
       </div>
       <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
-        records a scroll-through of the page, highlighting this moment's words. Agents also
-        auto-offer a site when a moment cites a source.
+        A YouTube link is clipped directly at its timestamp — no search used. Any other URL is
+        scroll-captured as a page. Added clips stack as candidates; nothing you placed is lost.
       </div>
 
       {sug?.status === "sourcing" && <div className="muted">sourcing… agents are finding clips for this moment</div>}

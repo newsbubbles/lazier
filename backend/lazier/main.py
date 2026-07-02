@@ -80,6 +80,7 @@ class PlaceClip(BaseModel):
     timeline_end: Optional[float] = None
     source_in: float = 0.0
     source_out: Optional[float] = None
+    ken_burns: Optional[bool] = None   # stills: slow zoom (default on for images)
 
 
 class UpdateClip(BaseModel):
@@ -289,6 +290,8 @@ def place_clip(pid: str, body: PlaceClip):
 
     clip = Clip(track_id=track.id, asset_id=asset.id, timeline_start=start,
                 timeline_end=end, source_in=body.source_in, source_out=body.source_out)
+    if asset.kind == "image":   # slow zoom on stills unless explicitly turned off
+        clip.transforms.ken_burns = True if body.ken_burns is None else body.ken_burns
     track.clips.append(clip)
     storage.save(p)
     return clip
@@ -519,7 +522,8 @@ async def capture_site(pid: str, bid: str, body: CaptureBody):
     async def job():
         ev = _emitter(pid, loop)
         try:
-            sug, assets = await asyncio.to_thread(sourcing.capture_url, p, beat, body.url, body.highlight)
+            sug, assets = await asyncio.to_thread(
+                sourcing.capture_from_url, p, beat, body.url, body.highlight, ev)
             await _apply(pid, sug, assets, place=True)
             await hub.send(pid, {"stage": "source_done", "beat_id": bid,
                                  "status": sug.status, "candidates": len(sug.candidates)})

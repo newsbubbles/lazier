@@ -50,7 +50,7 @@ export const api = {
   placeClip: (id: string, body: {
     track_id: string; asset_id: string;
     timeline_start: number; timeline_end?: number;
-    source_in?: number; source_out?: number | null;
+    source_in?: number; source_out?: number | null; ken_burns?: boolean;
   }) =>
     fetch(`/api/projects/${id}/clips`, {
       method: "POST",

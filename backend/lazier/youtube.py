@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from . import config
 
@@ -103,6 +105,46 @@ def search(query: str, max_results: int = 5, duration: str = "short",
         })
     _cache_put(query, n, out)
     return out
+
+
+def _parse_timestamp(t: str) -> float:
+    """'90' / '90s' / '1m30s' / '1h2m3s' -> seconds. Deterministic (exact parse, not judgment)."""
+    t = t.strip().lower()
+    if not t:
+        return 0.0
+    if t.isdigit():
+        return float(t)
+    m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?", t)
+    if m and any(m.groups()):
+        h, mnt, s = (int(x) if x else 0 for x in m.groups())
+        return float(h * 3600 + mnt * 60 + s)
+    digits = re.sub(r"\D", "", t)
+    return float(digits) if digits else 0.0
+
+
+def parse_youtube_url(url: str) -> tuple[str, float] | None:
+    """Return (video_id, start_seconds) for a YouTube link, else None. Handles watch?v=,
+    youtu.be/, /shorts/, /embed/, and the t/start timestamp param. Deterministic URL parse."""
+    try:
+        u = urlparse((url or "").strip())
+    except ValueError:
+        return None
+    host = (u.hostname or "").lower().removeprefix("www.")
+    vid = None
+    if host == "youtu.be":
+        vid = u.path.lstrip("/").split("/")[0] or None
+    elif host in ("youtube.com", "m.youtube.com", "music.youtube.com"):
+        if u.path == "/watch":
+            vid = (parse_qs(u.query).get("v") or [None])[0]
+        elif u.path.startswith("/shorts/"):
+            vid = u.path.split("/shorts/", 1)[1].split("/")[0] or None
+        elif u.path.startswith("/embed/"):
+            vid = u.path.split("/embed/", 1)[1].split("/")[0] or None
+    if not vid:
+        return None
+    qs = parse_qs(u.query)
+    tval = (qs.get("t") or qs.get("start") or ["0"])[0]
+    return vid, _parse_timestamp(tval)
 
 
 def fetch_clip(video_id: str, seconds: float, out_path: Path,
