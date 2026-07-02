@@ -130,7 +130,6 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
       <div className="topbar">
         <button className="drawer-toggle" onClick={() => setLeftOpen((v) => !v)} title="Tools panel">☰</button>
         <span className="brand">laz<span>ier</span></span>
-        <button onClick={onClose}>← Projects</button>
         <span className="muted">{project.name}</span>
         <span className="pill">{project.aspect_ratio}</span>
         <span className="pill">{project.rights_posture}</span>
@@ -191,6 +190,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
 
           <h3>Agent activity</h3>
           <div className="log">{log.length === 0 ? "idle" : log.map((l, i) => <div key={i}>{l}</div>)}</div>
+          <button onClick={onClose} className="back-btn">← Projects</button>
         </div>
 
         <div className="stage">

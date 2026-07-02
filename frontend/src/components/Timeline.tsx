@@ -3,6 +3,18 @@ import WaveSurfer from "wavesurfer.js";
 import { api } from "../lib/api";
 import type { Clip, Project } from "../lib/types";
 
+const PlayIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden><path d="M4 2.8v10.4L13 8z" /></svg>
+);
+const PauseIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+    <rect x="4" y="3" width="3" height="10" rx="0.5" /><rect x="9" y="3" width="3" height="10" rx="0.5" />
+  </svg>
+);
+const StopIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden><rect x="3.5" y="3.5" width="9" height="9" rx="1" /></svg>
+);
+
 // Transcript-driven timeline. One shared time axis (pxPerSec), everything scrolls
 // together. Sections (chapters) are the thin context band; BEATS are the visual
 // units — one clip slot per speech chunk, reactive to the moment's words.
@@ -134,8 +146,10 @@ export function Timeline({
   return (
     <div className="tl">
       <div className="tl-transport">
-        <button onClick={() => wsRef.current?.playPause()}>{playing ? "⏸" : "▶"}</button>
-        <button onClick={() => { wsRef.current?.stop(); onCursor(0); }}>⏹</button>
+        <button onClick={() => wsRef.current?.playPause()} aria-label={playing ? "Pause" : "Play"}>
+          {playing ? <PauseIcon /> : <PlayIcon />}
+        </button>
+        <button onClick={() => { wsRef.current?.stop(); onCursor(0); }} aria-label="Stop"><StopIcon /></button>
         <span className="muted">{cursor.toFixed(2)}s / {duration.toFixed(1)}s</span>
         <span className="muted">· {project.beats.length} beats / {project.sections.length} chapters</span>
         <div className="spacer" />

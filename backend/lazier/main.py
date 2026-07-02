@@ -28,6 +28,36 @@ app.add_middleware(
 app.mount("/files", StaticFiles(directory=str(config.WORKSPACE)), name="files")
 
 
+def _reconcile_orphaned_sourcing() -> int:
+    """A 'sourcing' status is only valid while a job runs in THIS process. On a fresh start
+    nothing is running, so any suggestion still marked 'sourcing' on disk is orphaned — its
+    job died with a previous process or an interrupted restart. Reset those to 'error' so the
+    beat's buttons re-enable instead of staying wedged forever."""
+    fixed = 0
+    for meta in storage.list_projects():
+        try:
+            p = storage.load(meta["id"])
+        except Exception:
+            continue
+        changed = False
+        for sug in p.suggestions.values():
+            if sug.status == "sourcing":
+                sug.status = "error"
+                sug.error = "sourcing was interrupted (server restarted) — hit Re-source"
+                changed = True
+                fixed += 1
+        if changed:
+            storage.save(p)
+    return fixed
+
+
+@app.on_event("startup")
+def _startup_reconcile() -> None:
+    n = _reconcile_orphaned_sourcing()
+    if n:
+        print(f"[startup] reset {n} orphaned 'sourcing' suggestion(s)")
+
+
 # --- websocket progress ------------------------------------------------------
 class Hub:
     def __init__(self) -> None:
@@ -449,6 +479,9 @@ async def _source_section_beats(pid: str, section: Section, beat_ids: list[str],
         async with sem:
             beat, plan = p.beat(bid), plans.get(bid)
             if not beat or not plan:
+                await _apply(pid, Suggestion(beat_id=bid, status="error", plan=plan,
+                                             error="director produced no plan for this beat"),
+                             [], place=False)
                 return
             try:
                 sug, assets = await asyncio.to_thread(sourcing.source_from_plan, p, beat, plan, ev)
