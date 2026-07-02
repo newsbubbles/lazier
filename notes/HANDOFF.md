@@ -10,8 +10,8 @@ captures → VLM verifies against the shot brief → clips land on an aligned NL
 the audio is the spine. Owner: Nate (newsbubbles). Full design in `notes/` (00→08).
 
 ## Repo / run
-- Backend: `D:\lazier\backend` (FastAPI + uv). Run: `cd backend; uv run uvicorn lazier.main:app --port 8000`
-- Frontend: `D:\lazier\frontend` (React+Vite+TS). Run: `cd frontend; npm run dev` (:5173, proxies to :8000)
+- Backend: `D:\lazier\backend` (FastAPI + uv). Run: `cd backend; uv run uvicorn lazier.main:app --port 5181` (or `launch.sh`/`launch.ps1` at repo root)
+- Frontend: `D:\lazier\frontend` (React+Vite+TS). Run: `cd frontend; npm run dev` (:5180 strictPort, proxies to :5181)
 - Git: `git@github.com:newsbubbles/lazier.git`, branch `main`. `.env` + `workspace/` are gitignored (keys + real projects never committed). NOTE: use PowerShell here-strings (`@'...'@`) for commit messages, NOT bash (bash mangles them with stray `@`).
 - Keys auto-load from `D:\lazier\.env` via dotenv: OPENROUTER, SERPER, FAL, YOUTUBE_API_KEY.
 

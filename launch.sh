@@ -11,8 +11,8 @@ set -uo pipefail
 
 TARGET="${1:-both}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_PORT=8000
-FRONTEND_PORT=5173
+BACKEND_PORT=5181
+FRONTEND_PORT=5180
 
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) IS_WIN=1 ;;

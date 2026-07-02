@@ -102,8 +102,12 @@ FAL_KEY=...                   # reserved for AI image gen (later)
 ## Run
 
 ```sh
-cd backend && uv run uvicorn lazier.main:app --port 8000      # API
-cd frontend && npm run dev                                    # http://localhost:5173
+cd backend && uv run uvicorn lazier.main:app --port 5181      # API
+cd frontend && npm run dev                                    # http://localhost:5180
+
+# or just use the launcher (frees ports first, starts both):
+./launch.sh            # bash (Git Bash / Linux / macOS)
+.\launch.ps1           # Windows PowerShell
 ```
 
 Open the frontend, create a project (pick aspect ratio + rights posture), upload audio,

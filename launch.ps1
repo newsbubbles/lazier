@@ -17,8 +17,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$BackendPort = 8000
-$FrontendPort = 5173
+$BackendPort = 5181
+$FrontendPort = 5180
 
 function Free-Port([int]$Port) {
     $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
