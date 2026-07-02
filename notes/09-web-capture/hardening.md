@@ -62,6 +62,27 @@ paywall, error page, or browser chrome rather than the described content. Costs 
 extra (already running); catches whatever slips past 1–3.
 - ~10 min prompt change.
 
+## Scroll motion: dwell at the start before panning
+Right now `webcapture_worker.py` positions at `start_scroll`, waits ~250ms, then immediately
+runs the ease-scroll loop (`window.scrollTo` per frame). It reads as a jump-cut into motion.
+Add a **dwell**: hold at the starting position for a fraction of the clip, THEN pan over the
+remainder, so the beat opens on a readable static frame.
+
+Implementation (small, in the worker's scroll section):
+- `HOLD_FRAC = 0.20` (configurable; e.g. `config.CAPTURE_TOP_HOLD_FRAC`, passed as an argv to
+  the worker like the headed flag). `hold = seconds * HOLD_FRAC`.
+- Set `t_scroll` (the trim marker) BEFORE the dwell so the hold is INCLUDED in the clip, then
+  `page.wait_for_timeout(hold * 1000)` at `start_scroll` (records the static top / start),
+  then run the existing ease loop over the REMAINING time `seconds - hold` (so total ≈
+  `seconds` and the `-t seconds` trim keeps dwell + pan).
+- Applies to both cases: no highlight → dwell at the true top then pan down; highlight →
+  dwell at the start position (~0.8vh above the target) then pan to center it. ("Stay at the
+  top" is the no-highlight case; generally it's "dwell at the start position".)
+- Guard: if `seconds` is tiny, clamp `hold` so there's still visible motion.
+
+Effort: ~20 min. Cheap quick win; do it alongside Layer 2/3 worker changes since it's the
+same file.
+
 ## Sequencing recommendation
 Layer 1 → 2 → 3 → 4. Layer 1 is the cheap high-value win (Facebook gone); Layer 2 is the
 real work (cookie banners); 3 and 4 are cheap belt-and-suspenders.
