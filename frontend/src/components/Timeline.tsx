@@ -107,6 +107,38 @@ export function Timeline({
     return () => sc.removeEventListener("wheel", onWheel);
   }, [onZoom]);
 
+  // pinch-to-zoom on touch (two fingers), anchored at the pinch midpoint. One finger still
+  // pans natively via the scroll container's touch-action: pan-x.
+  useEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    let startDist = 0, startPps = 0, anchorT = 0, anchorX = 0;
+    const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      startDist = dist(e.touches);
+      startPps = ppsRef.current;
+      anchorX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - sc.getBoundingClientRect().left;
+      anchorT = (anchorX + sc.scrollLeft) / ppsRef.current;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !startDist) return;
+      e.preventDefault();
+      const next = Math.max(15, Math.min(400, startPps * (dist(e.touches) / startDist)));
+      onZoom(next);
+      requestAnimationFrame(() => { sc.scrollLeft = anchorT * next - anchorX; });
+    };
+    const onEnd = (e: TouchEvent) => { if (e.touches.length < 2) startDist = 0; };
+    sc.addEventListener("touchstart", onStart, { passive: false });
+    sc.addEventListener("touchmove", onMove, { passive: false });
+    sc.addEventListener("touchend", onEnd);
+    return () => {
+      sc.removeEventListener("touchstart", onStart);
+      sc.removeEventListener("touchmove", onMove);
+      sc.removeEventListener("touchend", onEnd);
+    };
+  }, [onZoom]);
+
   // auto-PAGE (not realtime follow): when the playhead leaves the viewport, jump so
   // it lands near the left edge and keep reading from there.
   useEffect(() => {

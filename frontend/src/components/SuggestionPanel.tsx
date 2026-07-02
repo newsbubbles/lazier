@@ -138,13 +138,16 @@ function CandidateThumb({ project, c, beat, cursor, playing }: {
   project: Project; c: Candidate; beat: Beat; cursor: number; playing: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [previewing, setPreviewing] = useState(false);   // tapped to play once
   const asset = project.assets[c.asset_id];
   const isVideo = !!asset && asset.kind === "video" && !!asset.local_path;
   const inBeat = cursor >= beat.start && cursor <= beat.end;
+  const showVideo = isVideo && (inBeat || previewing);
 
+  // cursor sync (only when the playhead is in the beat AND we're not doing a tap-preview)
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || !isVideo) return;
+    if (!v || !isVideo || previewing) return;
     if (!inBeat) { v.pause(); return; }
     const dur = asset!.duration || 0;
     let t = cursor - beat.start;               // seconds into the beat = seconds into the clip
@@ -153,15 +156,25 @@ function CandidateThumb({ project, c, beat, cursor, playing }: {
     const tol = playing ? 0.3 : 0.05;          // don't fight playback; snap when scrubbing
     if (Math.abs(v.currentTime - t) > tol) v.currentTime = t;
     if (playing) v.play().catch(() => {}); else v.pause();
-  }, [cursor, playing, inBeat, isVideo, beat.start, asset?.duration]);
+  }, [cursor, playing, inBeat, isVideo, previewing, beat.start, asset?.duration]);
+
+  // tap the preview: play this clip once from the start (mobile can't reach the transport)
+  const playOnce = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    setPreviewing(true);
+    v.currentTime = 0;
+    v.play().catch(() => {});
+  };
 
   if (isVideo) {
     return (
       <>
-        {!inBeat && c.thumb && <img src={api.fileUrl(project.id, c.thumb)} alt="" />}
+        {!showVideo && c.thumb && <img src={api.fileUrl(project.id, c.thumb)} alt="" onClick={playOnce} />}
         <video ref={videoRef} src={api.fileUrl(project.id, asset!.local_path)}
-               muted playsInline preload="auto"
-               style={{ display: inBeat ? "block" : "none" }} />
+               muted playsInline preload="auto" onClick={playOnce}
+               onEnded={() => setPreviewing(false)}
+               style={{ display: showVideo ? "block" : "none", cursor: "pointer" }} />
       </>
     );
   }

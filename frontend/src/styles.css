@@ -115,7 +115,7 @@ a { color: var(--accent); }
 .tl { border-top: 1px solid var(--border); background: var(--panel); }
 .tl-transport { display: flex; align-items: center; gap: 8px; padding: 6px 12px; }
 .tl-transport button { display: inline-flex; align-items: center; justify-content: center; }
-.tl-scroll { overflow-x: auto; overflow-y: hidden; }
+.tl-scroll { overflow-x: auto; overflow-y: hidden; touch-action: pan-x; }  /* pan-x = 1-finger scroll; 2-finger pinch handled in JS */
 .tl-inner { position: relative; padding-bottom: 6px; }
 .tl-ruler { position: relative; height: 18px; border-bottom: 1px solid var(--border); }
 .tl-ruler .tick { position: absolute; top: 2px; font-size: 10px; color: var(--muted); transform: translateX(-50%); }
@@ -202,6 +202,7 @@ a { color: var(--accent); }
   .topbar .pill { display: none; }
   .toolbar { flex-wrap: wrap; }
 
+  .grid { grid-template-columns: 1fr; }   /* new-project form: stack the two columns */
   .editor-main { grid-template-columns: 1fr; }
   .side, .sugcol {
     position: fixed; top: 0; bottom: 0; width: min(86vw, 340px); z-index: 50;
