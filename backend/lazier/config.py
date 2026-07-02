@@ -87,7 +87,8 @@ CAPTURE_HEADED = os.environ.get("LAZIER_CAPTURE_HEADED", "0") not in ("0", "fals
 # --- ffmpeg ------------------------------------------------------------------
 FFMPEG = os.environ.get("LAZIER_FFMPEG", "ffmpeg")
 FFPROBE = os.environ.get("LAZIER_FFPROBE", "ffprobe")
-PROXY_HEIGHT = int(os.environ.get("LAZIER_PROXY_HEIGHT", "480"))
+PROXY_HEIGHT = int(os.environ.get("LAZIER_PROXY_HEIGHT", "360"))
+PROXY_FPS = int(os.environ.get("LAZIER_PROXY_FPS", "18"))   # preview only; lower = faster encode
 
 # --- canvas presets ----------------------------------------------------------
 ASPECT_PRESETS: dict[str, tuple[int, int]] = {

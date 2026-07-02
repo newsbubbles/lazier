@@ -106,6 +106,7 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
         W2 = int(round(W * H2 / H))
         W2 -= W2 % 2
         W, H = W2, H2
+    fps_val = config.PROXY_FPS if height else project.fps   # preview renders at a low fps
 
     pdir = storage.project_dir(project.id)
     inputs: list[str] = []
@@ -131,8 +132,8 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
             inputs += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
             chain = f"[{idx}:v]{_fit(W, H)}"
             if c.transforms.ken_burns:
-                chain += (f",zoompan=z='min(zoom+0.0006,1.15)':d={int(dur*config.PROXY_HEIGHT)}:"
-                          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps=25")
+                chain += (f",zoompan=z='min(zoom+0.0006,1.15)':d={max(int(dur*fps_val),1)}:"
+                          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={fps_val}")
             chain += f",setpts=PTS-STARTPTS+{start:.3f}/TB"
         else:  # video
             si = c.source_in
@@ -151,7 +152,7 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
         idx += 1
 
     # base canvas + overlay chain
-    filt.append(f"color=c=black:s={W}x{H}:r={project.fps}:d={total:.3f}[base]")
+    filt.append(f"color=c=black:s={W}x{H}:r={fps_val}:d={total:.3f}[base]")
     cur = "base"
     for i, (lbl, start, end) in enumerate(vlabels):
         nxt = "vout" if i == len(vlabels) - 1 else f"o{i}"
@@ -206,7 +207,7 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
     filter_path.write_text(";".join(filt), encoding="utf-8")
 
     crf = "30" if height else "20"
-    preset = "veryfast" if height else "medium"
+    preset = "ultrafast" if height else "medium"
     cmd = [config.FFMPEG, "-y", *inputs,
            "-filter_complex_script", str(filter_path),
            "-map", "[vout]", "-map", amap,
@@ -214,7 +215,7 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
            "-c:a", "aac", "-b:a", "192k",
            "-t", f"{total:.3f}", "-movflags", "+faststart"]
     if height:  # proxy: dense keyframes so scrub-seek snaps instantly to the playhead
-        gop = max(int(project.fps // 2), 5)
+        gop = max(int(fps_val // 2), 5)
         cmd += ["-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0"]
     # machine-readable progress on stdout so callers can stream a real percentage
     cmd += ["-progress", "pipe:1", "-nostats"]
