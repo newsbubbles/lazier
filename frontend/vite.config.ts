@@ -7,6 +7,7 @@ export default defineConfig({
   server: {
     port: 5180,
     strictPort: true,   // fail loudly rather than drift to 5181/5182 if 5180 is taken
+    allowedHosts: [".ts.net"],   // accept the tailnet MagicDNS host forwarded by `tailscale serve`
     proxy: {
       "/api": "http://localhost:5181",
       "/files": "http://localhost:5181",
