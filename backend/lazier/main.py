@@ -15,7 +15,8 @@ from pydantic import BaseModel
 
 from . import config, direction, render, segmentation, sourcing, storage, transcribe
 from .media_probe import probe
-from .models import Beat, Candidate, Clip, Effects, MediaAsset, Project, Section, Suggestion, Transforms
+from .models import (Beat, BeatPlan, Candidate, Clip, Effects, MediaAsset, Project, Section,
+                     Suggestion, Transforms)
 
 _apply_lock = asyncio.Lock()
 
@@ -334,6 +335,19 @@ def place_clip(pid: str, body: PlaceClip):
         clip.transforms.ken_burns = True if body.ken_burns is None else body.ken_burns
     if body.beat_id:            # a beat holds one clip — replace whatever was there
         track.clips = [c for c in track.clips if c.beat_id != body.beat_id]
+        beat = p.beat(body.beat_id)   # reflect it as a candidate so the panel shows it, like URL paste
+        if beat:
+            thumb = asset.local_path if asset.kind == "image" else ""
+            cand = Candidate(asset_id=asset.id, source=(asset.origin or "upload"),
+                             title=asset.name or "your upload", rationale="your upload",
+                             fit_score=0.85, thumb=thumb, flags=[])
+            prev = p.suggestions.get(body.beat_id)
+            keep = [c for c in prev.candidates if c.asset_id != asset.id] if prev else []
+            plan = prev.plan if (prev and prev.plan) else BeatPlan(
+                visual_register="literal", content_type="youtube", shot_brief=beat.text)
+            p.suggestions[body.beat_id] = Suggestion(
+                beat_id=body.beat_id, status="ready", plan=plan,
+                candidates=[cand] + keep, recommended_index=0)
     track.clips.append(clip)
     storage.save(p)
     return clip
