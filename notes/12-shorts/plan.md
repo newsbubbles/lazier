@@ -12,7 +12,12 @@ runs over existing project.json + assets on disk — no re-sourcing.
   labels, the beats and what clip is placed on each. `reference_date`.
 - **Output** `ShortPlan`: `{ start, end, hook_title, social_caption, rationale, caption_style }`.
 - **Snap [start,end] to BEAT boundaries** so we cut cleanly on speech and reuse the existing
-  placed clips + a clean audio cut. Target ~30s (`SHORTS_TARGET_SECONDS=30`, accept ~20-40).
+  placed clips + a clean audio cut.
+- **Length: target ~30s but let CONTENT pick the natural close.** `SHORTS_TARGET_SECONDS=30`,
+  acceptable ~18-45s, **hard cap 60s** (to qualify as a YouTube Short and stay in the
+  high-completion zone across TikTok/Reels/X). Completion rate rules the algorithm, so a
+  tight 22s beats a padded 35s — the agent stops where the thought actually closes, it does
+  not pad to hit 30. (30 is a good default anchor; the range is the real spec.)
 - **One per video** for now; schema can carry a ranked list later for N shorts.
 - **Tips baked into the system prompt** (what makes a good short):
   - Opens with a HOOK in the first 1-2s: a question, a bold/contrarian claim, a number.
@@ -31,21 +36,40 @@ Target canvas **1080x1920** (`SHORTS_W/H`). Per source:
 - Only clips/audio inside `[start,end]`, shifted to t=0; audio is the original narration for
   that window. Add `loudnorm` so platform loudness is consistent.
 
-## 3. Captions — ported + adapted from MemeCat
-Port the MECHANICAL parts (lightweight, stdlib + ffmpeg); DROP the heavy semantic stack.
-- **ASS builder** (from `generate_subtitles` + `seconds_to_hms` + the Style/Format header):
-  big bold style, heavy outline/shadow, a few words per line, per-word karaoke timing from
-  `transcript.words` in the window (re-based to 0). Positioned in the **vertical safe zone**
-  (centered, above the bottom ~15% platform UI and clear of the right-side buttons).
-- **Burn-in** via ffmpeg `ass=<file>` filter appended to the shorts filtergraph (from `write`).
-- **Content-driven styling WITHOUT MemeCat's EffectBucket.** MemeCat picks emphasis/color/
-  emoji by embedding-search over YAML buckets (sentence_transformers + transformers +
-  prompt-owl — deps lazier shouldn't take on). Instead the **shorts agent returns a
-  `caption_style`** (font, size, primary color, emphasis policy, emoji on/off) chosen from
-  the short's content/tone — which is exactly Nate's "agent chooses the config per short."
-  Optionally a tiny keyword→emoji map for punch. **DECISION TO CONFIRM:** LLM-picked style
-  config (recommended, dep-light) vs porting the embedding buckets wholesale.
-- We do NOT need MemeCat's Whisper (lazier already has word timings).
+## 3. Captions — word-level engine (MemeCat mechanics + our word timing + LLM style)
+**Word timing is already there.** `project.transcript.words` holds per-word start/end
+(verified: 743 words on Neurocracy 2, persisted in project.json). So **no backfill, no
+separate transcript.json needed** — the engine reads `project.transcript.words` directly.
+`captions.srt` stays the segment-level artifact; the word timing is the sub-timing SRT lacks.
+(Optional: also dump a `transcript.json` for external tools, but it's redundant with data we
+already hold.)
+
+Port the MECHANICAL parts of MemeCat (stdlib + ffmpeg), drop its ML stack (no Whisper /
+sentence_transformers / transformers / prompt-owl — lazier already has the words):
+- **ASS builder** (`generate_subtitles` + `seconds_to_hms` + the Style/Format header) +
+  **burn-in** via the ffmpeg `ass=<file>` filter (`write`), positioned in the vertical safe
+  zone (centered, above the bottom ~15% platform UI, clear of the right-side buttons).
+
+Then BUILD PROPERLY the parts MemeCat left unfinished, driven by the word timing:
+- **Words-per-line**: configurable (1 = punchy one-word pop; 2-4 for calmer lines). Group
+  `transcript.words` accordingly.
+- **Highlight-as-spoken (karaoke)**: the active word pops/recolors exactly when spoken —
+  ASS `\k` karaoke tags or one event per word, using per-word start/end. This is precisely
+  what SRT can't do and what the word timing unlocks.
+- **Emphasis / emoji / color** per keyword.
+
+**Styling driven by the LLM, not MemeCat's embedding buckets (DECIDED: LLM).** The buckets'
+value is very custom captions; we keep that expressiveness but move the CHOICE from an
+embedding search to LLM judgment. The shorts agent returns a rich `caption_style` that
+expresses MemeCat's full vocabulary:
+```
+caption_style = { font, base_size, primary_color, outline, shadow,
+                  words_per_line, highlight_mode: none|word|line, highlight_color,
+                  emphasis_keywords[], emoji: off|auto|map, position }
+```
+The agent picks these from the short's content/tone ("call the captioning style based on what
+MemeCat shows"). Later we can add a few named presets (mirroring the bucket YAMLs) for the
+agent to pick among, if pure free-config feels too loose.
 
 ## 4. Output
 - `exports/shorts/short_1.mp4` (own subfolder, per Nate).
