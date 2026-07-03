@@ -397,6 +397,28 @@ async def render_export(pid: str):
     return {"video": f"/files/{pid}/{res['video']}", "srt": f"/files/{pid}/captions.srt"}
 
 
+@app.post("/api/projects/{pid}/shorts")
+def make_short(pid: str):
+    """Pick the best ~30s window (agent) and render one 9:16 captioned short to
+    exports/shorts/. Synchronous — runs in the threadpool; a short is quick to render."""
+    from . import shorts
+    p = _load(pid)
+    if not p.transcript or not p.transcript.words:
+        raise HTTPException(400, "no word-level transcript for this project; re-transcribe first")
+    try:
+        plan = shorts.find_short(p)
+        res = render.render_short(p, plan)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "video": f"/files/{pid}/{res['video']}",
+        "caption_url": f"/files/{pid}/{res['caption']}",
+        "hook": plan.hook_title, "social_caption": plan.social_caption,
+        "start": res["start"], "end": res["end"], "duration": res["duration"],
+        "style": plan.caption_style.model_dump(),
+    }
+
+
 @app.get("/api/projects/{pid}/chapters")
 def get_chapters(pid: str):
     """YouTube-description chapters (M:SS Title per line) from the project's topic sections.

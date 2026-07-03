@@ -90,6 +90,14 @@ FFPROBE = os.environ.get("LAZIER_FFPROBE", "ffprobe")
 PROXY_HEIGHT = int(os.environ.get("LAZIER_PROXY_HEIGHT", "360"))
 PROXY_FPS = int(os.environ.get("LAZIER_PROXY_FPS", "18"))   # preview only; lower = faster encode
 
+# shorts (vertical clips for Shorts / Reels / TikTok)
+SHORTS_W = int(os.environ.get("LAZIER_SHORTS_W", "1080"))
+SHORTS_H = int(os.environ.get("LAZIER_SHORTS_H", "1920"))
+SHORTS_TARGET_SECONDS = float(os.environ.get("LAZIER_SHORTS_TARGET", "30"))
+SHORTS_MIN_SECONDS = float(os.environ.get("LAZIER_SHORTS_MIN", "15"))
+SHORTS_MAX_SECONDS = float(os.environ.get("LAZIER_SHORTS_MAX", "60"))
+SHORTS_MODEL = os.environ.get("LAZIER_SHORTS_MODEL", DIRECTOR_MODEL)
+
 # --- canvas presets ----------------------------------------------------------
 ASPECT_PRESETS: dict[str, tuple[int, int]] = {
     "16:9": (1920, 1080),

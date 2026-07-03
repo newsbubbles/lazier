@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import config, storage
-from .models import Clip, MediaAsset, Project
+from .models import Clip, MediaAsset, Project, Word
 
 Progress = Optional[Callable[[float], None]]   # called with a 0..1 render fraction
 
@@ -269,3 +269,100 @@ def render_export(project: Project, on_progress: Progress = None) -> dict:
     srt = write_srt(project)
     chapters = write_chapters(project)
     return {"video": "exports/export.mp4", "srt": srt.name, "chapters": chapters.name}
+
+
+# --- shorts (vertical 9:16 slice + burned captions) --------------------------
+def _reframe(origin: str, w: int, h: int) -> str:
+    """Scale-to-COVER the vertical frame then crop to fill: web-captures crop LEFT (the
+    reading/content side), everything else crops CENTER. Works for any source aspect."""
+    scale = f"scale={w}:{h}:force_original_aspect_ratio=increase"
+    crop = f"crop={w}:{h}:0:0" if origin == "web" else f"crop={w}:{h}"
+    return f"{scale},{crop},setsar=1"
+
+
+def _build_short_command(project: Project, out_path: Path, ass_name: str,
+                         t0: float, t1: float) -> list[str]:
+    audio_asset = project.audio_asset()
+    if not audio_asset:
+        raise RuntimeError("project has no audio; nothing to render")
+    W, H, fps = config.SHORTS_W, config.SHORTS_H, project.fps
+    total = max(t1 - t0, 0.1)
+    pdir = storage.project_dir(project.id)
+
+    # input 0 = master audio, pre-trimmed to the window
+    inputs = ["-ss", f"{t0:.3f}", "-to", f"{t1:.3f}", "-i", str(pdir / audio_asset.local_path)]
+    filt: list[str] = []
+    vlabels: list[tuple[str, float, float]] = []
+    idx = 1
+    for c in _visual_clips(project):
+        cs, ce = max(c.timeline_start, t0), min(c.timeline_end, t1)
+        if ce <= cs:
+            continue                                  # clip doesn't touch the window
+        asset = project.assets.get(c.asset_id)
+        if not asset:
+            continue
+        path = str(pdir / asset.local_path)
+        start, end = cs - t0, ce - t0                 # position within the short
+        dur = max(end - start, 0.04)
+        lbl = f"v{idx}"
+        if asset.kind == "image":
+            inputs += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
+            chain = f"[{idx}:v]{_reframe(asset.origin, W, H)}"
+            if c.transforms.ken_burns:
+                chain += (f",zoompan=z='min(zoom+0.0006,1.15)':d={max(int(dur*fps),1)}:"
+                          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={fps}")
+            chain += f",setpts=PTS-STARTPTS+{start:.3f}/TB"
+        else:
+            si = c.source_in + (cs - c.timeline_start)   # region of the source that maps here
+            chain = (f"[{idx}:v]trim=start={si:.3f}:end={si + dur:.3f},setpts=PTS-STARTPTS,"
+                     f"{_reframe(asset.origin, W, H)},setpts=PTS-STARTPTS+{start:.3f}/TB")
+            inputs += ["-i", path]
+        chain += f"[{lbl}]"
+        filt.append(chain)
+        vlabels.append((lbl, start, end))
+        idx += 1
+
+    filt.append(f"color=c=black:s={W}x{H}:r={fps}:d={total:.3f}[base]")
+    cur = "base"
+    for i, (lbl, s, e) in enumerate(vlabels):
+        filt.append(f"[{cur}][{lbl}]overlay=enable='between(t,{s:.3f},{e:.3f})':"
+                    f"eof_action=pass:format=auto[o{i}]")
+        cur = f"o{i}"
+    filt.append(f"[{cur}]ass={ass_name}[vout]")       # burn captions (ass by basename; cwd=out dir)
+
+    filter_path = out_path.with_name(out_path.stem + ".filter.txt")
+    filter_path.write_text(";".join(filt), encoding="utf-8")
+    return [config.FFMPEG, "-y", *inputs,
+            "-filter_complex_script", str(filter_path),
+            "-map", "[vout]", "-map", "0:a", "-af", "loudnorm",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "20",
+            "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", "-movflags", "+faststart",
+            str(out_path)]
+
+
+def render_short(project: Project, plan) -> dict:
+    """Render one vertical short for `plan` (a shorts.ShortPlan): reframe to 9:16, burn the
+    word-level karaoke captions, write to exports/shorts/. ffmpeg runs with cwd=out dir so the
+    ass= filter can reference the subtitle by basename (dodges Windows path escaping)."""
+    from . import shorts
+    t0, t1 = shorts.window_bounds(project, plan)
+    out_dir = storage.abs_path(project.id, "exports/shorts")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out, ass_name = out_dir / "short_1.mp4", "short_1.ass"
+
+    src = project.transcript.words if project.transcript else []
+    words = [Word(text=w.text, start=max(w.start - t0, 0.0), end=max(w.end - t0, 0.01))
+             for w in src if w.end > t0 and w.start < t1]
+    (out_dir / ass_name).write_text(
+        shorts.build_caption_ass(words, plan.caption_style, config.SHORTS_W, config.SHORTS_H),
+        encoding="utf-8")
+
+    res = subprocess.run(_build_short_command(project, out, ass_name, t0, t1),
+                         cwd=str(out_dir), capture_output=True, text=True)
+    if res.returncode != 0:
+        tail = "\n".join(res.stderr.strip().splitlines()[-15:])
+        raise RuntimeError(f"short render failed:\n{tail}")
+    (out_dir / "short_1.txt").write_text(
+        f"{plan.hook_title}\n\n{plan.social_caption}\n", encoding="utf-8")
+    return {"video": "exports/shorts/short_1.mp4", "caption": "exports/shorts/short_1.txt",
+            "start": round(t0, 2), "end": round(t1, 2), "duration": round(t1 - t0, 1)}
