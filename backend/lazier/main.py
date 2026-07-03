@@ -349,6 +349,7 @@ def place_clip(pid: str, body: PlaceClip):
                 beat_id=body.beat_id, status="ready", plan=plan,
                 candidates=[cand] + keep, recommended_index=0)
     track.clips.append(clip)
+    _prune_orphan_clips(p)
     storage.save(p)
     return clip
 
@@ -475,6 +476,18 @@ def _beat_filled(project: Project, bid: str) -> bool:
     return bool(vt and any(c.beat_id == bid for c in vt.clips))
 
 
+def _prune_orphan_clips(project: Project) -> None:
+    """Drop visual clips NOT tied to a beat that overlap a beat-linked clip — leftovers from
+    older placements that would double up on a beat's window. An orphan sitting on an
+    otherwise-empty beat is kept (it's the only visual there)."""
+    vt = project.visual_track()
+    if not vt:
+        return
+    linked = [c for c in vt.clips if c.beat_id]
+    vt.clips = [c for c in vt.clips if c.beat_id or not any(
+        c.timeline_start < L.timeline_end and c.timeline_end > L.timeline_start for L in linked)]
+
+
 def _place_candidate(project: Project, beat: Beat, cand: Candidate) -> None:
     vt = project.visual_track()
     if not vt:
@@ -489,6 +502,7 @@ def _place_candidate(project: Project, beat: Beat, cand: Candidate) -> None:
     if asset and asset.kind == "image":   # stills get slow zoom so they aren't dead frames
         clip.transforms.ken_burns = True
     vt.clips.append(clip)
+    _prune_orphan_clips(project)
 
 
 async def _apply(pid: str, sug: Suggestion, assets: list[MediaAsset], place: bool) -> None:
@@ -612,6 +626,12 @@ async def capture_site(pid: str, bid: str, body: CaptureBody):
             await hub.send(pid, {"stage": "source_done", "beat_id": bid,
                                  "status": sug.status, "candidates": len(sug.candidates)})
         except Exception as e:
+            # reset the beat's suggestion to error (NOT left at 'sourcing') so Find/Add re-enable
+            prev = p.suggestions.get(bid)
+            await _apply(pid, Suggestion(beat_id=bid, status="error",
+                                         plan=(prev.plan if prev else None),
+                                         candidates=(prev.candidates if prev else []),
+                                         error=f"{type(e).__name__}: {e}"), [], place=False)
             await hub.send(pid, {"stage": "error", "beat_id": bid, "error": f"{type(e).__name__}: {e}"})
 
     asyncio.create_task(job())
