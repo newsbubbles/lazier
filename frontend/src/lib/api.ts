@@ -103,5 +103,10 @@ export const api = {
   chapters: (id: string) =>
     fetch(`/api/projects/${id}/chapters`).then(j<{ text: string; file: string }>),
 
+  makeShort: (id: string) =>
+    fetch(`/api/projects/${id}/shorts`, { method: "POST" }).then(
+      j<{ video: string; caption_url: string; hook: string; social_caption: string;
+          start: number; end: number; duration: number }>),
+
   fileUrl: (id: string, rel: string) => `/files/${id}/${rel}`,
 };

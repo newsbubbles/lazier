@@ -105,6 +105,16 @@ input, select {
 
 .log { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); max-height: 90px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
 .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+
+/* Export dropdown */
+.dropdown { position: relative; display: inline-block; }
+.dropdown-backdrop { position: fixed; inset: 0; z-index: 60; }
+.dropdown-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 61; min-width: 190px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; gap: 2px; }
+.dropdown-menu button { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 8px 10px; }
+.dropdown-menu button:hover:not(:disabled) { background: var(--panel); }
+.dropdown-menu .dd-sub { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
 .wf { padding: 6px 12px; }
 h3 { margin: 14px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
 h2 { margin: 0 0 12px; }

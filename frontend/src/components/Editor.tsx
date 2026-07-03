@@ -18,6 +18,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   const [err, setErr] = useState("");
   const [leftOpen, setLeftOpen] = useState(false);       // mobile drawers
   const [rightOpen, setRightOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);   // Export dropdown
   const srcTotal = useRef(0);
   const srcDone = useRef(0);
 
@@ -122,6 +123,28 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
       setLog((l) => [...l, "✓ YT chapters copied to clipboard (also saved as chapters.txt)"]);
     } catch (e: any) { setErr(e.message); }
   };
+  const doShort = async () => {
+    setErr(""); setBusy("making short");
+    try {
+      const r = await api.makeShort(projectId);
+      setLog((l) => [...l, `✓ short: "${r.hook}" (${r.duration}s)`]);
+      window.open(r.video, "_blank");
+    } catch (e: any) { setErr(e.message); }
+    setBusy("");
+  };
+  const doFull = async () => {
+    setErr("");
+    try {
+      setBusy("exporting video"); setPct(0);
+      await api.renderExport(projectId); setPct(null);
+      setBusy("making short");
+      await api.makeShort(projectId);
+      setBusy("writing chapters");
+      await api.chapters(projectId);
+      setLog((l) => [...l, "✓ full export: video + short + chapters"]);
+    } catch (e: any) { setErr(e.message); }
+    setBusy(""); setPct(null);
+  };
   // selecting a beat opens the clips drawer on mobile (no-op visually on desktop)
   const selectBeat = (id: string | null) => { setSelectedBeat(id); if (id) setRightOpen(true); };
 
@@ -196,11 +219,24 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
         <div className="stage">
           <div className="toolbar">
             <button onClick={doProxy} disabled={!audioAsset || !!busy}>Render preview</button>
-            <button className="primary" onClick={doExport} disabled={!audioAsset || !!busy}>Export</button>
-            <button onClick={copyChapters} disabled={!project.sections.length}
-                    title="Copy YouTube chapter timestamps (also saved as chapters.txt)">
-              YT chapters
-            </button>
+            <div className="dropdown">
+              <button className="primary" onClick={() => setExportOpen((v) => !v)}
+                      disabled={!audioAsset || !!busy}>Export ▾</button>
+              {exportOpen && (
+                <>
+                  <div className="dropdown-backdrop" onClick={() => setExportOpen(false)} />
+                  <div className="dropdown-menu">
+                    <button onClick={() => { setExportOpen(false); doFull(); }}>
+                      Full <span className="dd-sub">video + short + chapters</span>
+                    </button>
+                    <button onClick={() => { setExportOpen(false); doExport(); }}>Video</button>
+                    <button onClick={() => { setExportOpen(false); doShort(); }}>Short</button>
+                    <button onClick={() => { setExportOpen(false); copyChapters(); }}
+                            disabled={!project.sections.length}>YT Chapters</button>
+                  </div>
+                </>
+              )}
+            </div>
             <div className="spacer" />
             <span className="muted">{project.sections.length} sections</span>
           </div>
