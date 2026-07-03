@@ -51,6 +51,7 @@ export const api = {
     track_id: string; asset_id: string;
     timeline_start: number; timeline_end?: number;
     source_in?: number; source_out?: number | null; ken_burns?: boolean;
+    beat_id?: string; section_id?: string | null;
   }) =>
     fetch(`/api/projects/${id}/clips`, {
       method: "POST",

@@ -9,8 +9,11 @@ lock, so concurrent source-all runs don't race on project.json."""
 from __future__ import annotations
 
 import datetime as _dt
+import subprocess
 from typing import Callable, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+import httpx
 
 from . import config, serper, storage, vision, webcapture, youtube
 from .media_probe import probe
@@ -234,12 +237,127 @@ def clip_youtube_url(project: Project, beat: Beat, url: str,
     return sug, [asset]
 
 
+# --- direct media URLs (image/video files, not web pages) --------------------
+_VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v", ".mkv")
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+
+
+def _url_ext(url: str) -> str:
+    name = urlparse(url).path.rsplit("/", 1)[-1]
+    return ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+
+
+def _url_media_kind(url: str) -> Optional[str]:
+    """Classify a URL as 'video' | 'image' | None (a page). Extension first, then verify by an
+    HTTP HEAD content-type, so a .jpg link that's really an HTML page falls back to None."""
+    ext = _url_ext(url)
+    guess = "video" if ext in _VIDEO_EXTS else "image" if ext in _IMAGE_EXTS else None
+    try:
+        ctype = httpx.head(url, follow_redirects=True, timeout=8).headers.get("content-type", "").lower()
+    except Exception:
+        ctype = ""
+    if ctype.startswith("video/"):
+        return "video"
+    if ctype.startswith("image/"):
+        return "image"
+    if ctype.startswith("text/") or "html" in ctype:
+        return None
+    return guess                                    # HEAD blocked/blank -> trust the extension
+
+
+def _download(url: str, dest, max_bytes: int = 80_000_000):
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    total = 0
+    with httpx.stream("GET", url, follow_redirects=True, timeout=30) as r:
+        r.raise_for_status()
+        with dest.open("wb") as f:
+            for chunk in r.iter_bytes(65536):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise youtube.SourcingError("file too large (>80MB)",
+                                                "use a smaller file or a different URL")
+                f.write(chunk)
+    return dest
+
+
+def _additive(project: Project, beat: Beat, cand: Candidate, asset: MediaAsset,
+              register: str, ctype: str) -> tuple[Suggestion, list[MediaAsset]]:
+    """Add one manually-provided candidate to the beat, keeping any existing candidates."""
+    existing = project.suggestions.get(beat.id)
+    cands = ([cand] + existing.candidates) if existing else [cand]
+    plan = (existing.plan if existing and existing.plan
+            else BeatPlan(visual_register=register, content_type=ctype, shot_brief=beat.text))
+    return Suggestion(beat_id=beat.id, status="ready", plan=plan, candidates=cands,
+                      recommended_index=0), [asset]
+
+
+def clip_video_url(project: Project, beat: Beat, url: str,
+                   on_event: Optional[Event] = None) -> tuple[Suggestion, list[MediaAsset]]:
+    """Clip a direct video-file URL (no yt-dlp): ffmpeg reads the URL and trims from an
+    optional ?t= start marker for the beat's length. Additive candidate, like a YouTube paste."""
+    pr = urlparse(url)
+    q = parse_qs(pr.query)
+    start_at = youtube._parse_timestamp((q.get("t") or q.get("start") or ["0"])[0])
+    q.pop("t", None); q.pop("start", None)   # our ?t= marker isn't part of the real file URL
+    src = urlunparse(pr._replace(query=urlencode(q, doseq=True)))
+    pdir = storage.project_dir(project.id)
+    clip_len = min(beat.end - beat.start, config.SOURCE_MAX_CLIP_SECONDS)
+    asset = MediaAsset(kind="video", origin="upload",
+                       name=urlparse(url).path.rsplit("/", 1)[-1] or "video",
+                       source_url=url, license="user_provided")
+    rel = f"media/sourced/{asset.id}.mp4"
+    (pdir / rel).parent.mkdir(parents=True, exist_ok=True)
+    _emit(on_event, beat_id=beat.id, msg=f"clipping video URL @ {start_at:.0f}s")
+    cmd = [config.FFMPEG, "-y", "-ss", f"{start_at:.2f}", "-i", src, "-t", f"{clip_len:.2f}",
+           "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+           "-preset", "veryfast", "-crf", "23", str(pdir / rel)]
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    if res.returncode != 0 or not (pdir / rel).exists():
+        tail = " ".join((res.stderr or "").strip().splitlines()[-3:])
+        raise youtube.SourcingError(f"could not clip video URL: {tail[:150]}",
+                                    "check the link points at a direct video file")
+    info = probe(pdir / rel)
+    frames = vision.sample_frames(pdir / rel, pdir / "media/frames", n=1)
+    asset.local_path, asset.duration = rel, clip_len
+    asset.width, asset.height, asset.verify_score = info["width"], info["height"], 0.85
+    thumb = f"media/frames/{frames[0].name}" if frames else ""
+    rationale = f"pasted by you (from {start_at:.0f}s)" if start_at else "pasted by you"
+    cand = Candidate(asset_id=asset.id, source="upload", title=asset.name, rationale=rationale,
+                     fit_score=0.85, thumb=thumb, flags=[])
+    return _additive(project, beat, cand, asset, "literal", "youtube")
+
+
+def add_image_url(project: Project, beat: Beat, url: str,
+                  on_event: Optional[Event] = None) -> tuple[Suggestion, list[MediaAsset]]:
+    """Download a direct image-file URL as an image asset (gets ken-burns on placement).
+    Additive candidate; the image itself is the thumbnail."""
+    pdir = storage.project_dir(project.id)
+    asset = MediaAsset(kind="image", origin="upload",
+                       name=urlparse(url).path.rsplit("/", 1)[-1] or "image",
+                       source_url=url, license="user_provided")
+    rel = f"media/sourced/{asset.id}{_url_ext(url) or '.jpg'}"
+    _emit(on_event, beat_id=beat.id, msg=f"downloading image: {url[:50]}")
+    _download(url, pdir / rel)
+    info = probe(pdir / rel)
+    asset.local_path = rel
+    asset.width, asset.height, asset.verify_score = info["width"], info["height"], 0.85
+    cand = Candidate(asset_id=asset.id, source="upload", title=asset.name,
+                     rationale="pasted by you", fit_score=0.85, thumb=rel, flags=[])
+    return _additive(project, beat, cand, asset, "literal", "youtube")
+
+
 def capture_from_url(project: Project, beat: Beat, url: str, highlight: Optional[str] = None,
                      on_event: Optional[Event] = None) -> tuple[Suggestion, list[MediaAsset]]:
-    """One paste box, two behaviors: a YouTube link is clipped directly at its timestamp;
-    anything else is scroll-captured as a page."""
+    """One paste box, several behaviors: a YouTube link is clipped at its timestamp; a direct
+    video file is clipped (honoring ?t=); a direct image is downloaded; anything else is
+    scroll-captured as a page."""
     if youtube.parse_youtube_url(url):
         return clip_youtube_url(project, beat, url, on_event)
+    kind = _url_media_kind(url)
+    if kind == "video":
+        return clip_video_url(project, beat, url, on_event)
+    if kind == "image":
+        return add_image_url(project, beat, url, on_event)
     return capture_url(project, beat, url, highlight)
 
 

@@ -17,6 +17,7 @@ export function SuggestionPanel({
   const [url, setUrl] = useState("");
   const [beatNote, setBeatNote] = useState("");   // per-beat guidance for Find clips
   const [zoom, setZoom] = useState(true);          // slow-zoom uploaded stills
+  const [err, setErr] = useState("");
   const sug = project.suggestions?.[beat.id];
   const plan = sug?.plan;
   const section = project.sections.find((s) => s.id === beat.section_id);
@@ -37,13 +38,19 @@ export function SuggestionPanel({
   };
 
   const uploadOwn = async (f: File) => {
-    const asset = await api.uploadMedia(project.id, f);
-    await api.placeClip(project.id, {
-      track_id: project.tracks.find((t) => t.kind === "visual")!.id,
-      asset_id: asset.id, timeline_start: beat.start, timeline_end: beat.end,
-      ken_burns: zoom,   // backend applies it only to stills
-    });
-    onChanged();
+    setErr("");
+    const vt = project.tracks.find((t) => t.kind === "visual");
+    if (!vt) { setErr("project has no visual track"); return; }
+    try {
+      const asset = await api.uploadMedia(project.id, f);
+      await api.placeClip(project.id, {
+        track_id: vt.id, asset_id: asset.id,
+        timeline_start: beat.start, timeline_end: beat.end,
+        beat_id: beat.id, section_id: beat.section_id,   // link to the beat so it shows
+        ken_burns: zoom,                                  // backend applies it only to stills
+      });
+      onChanged();
+    } catch (e: any) { setErr(e.message); }
   };
 
   return (
@@ -77,18 +84,20 @@ export function SuggestionPanel({
       </div>
       <label className="muted" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginBottom: 8 }}>
         <input type="checkbox" checked={zoom} onChange={(e) => setZoom(e.target.checked)} style={{ width: "auto" }} />
-        slow zoom on uploaded images
+        effects on images (slow zoom)
       </label>
 
       <div className="capture-row">
-        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="paste a YouTube link or a site URL…"
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="paste a YouTube / video / image / site URL…"
                onKeyDown={(e) => e.key === "Enter" && capture()} />
         <button onClick={capture} disabled={busy || !url.trim()}>➕ Add</button>
       </div>
       <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
-        A YouTube link is clipped directly at its timestamp — no search used. Any other URL is
-        scroll-captured as a page. Added clips stack as candidates; nothing you placed is lost.
+        A YouTube or direct video link is clipped at its timestamp (add <code>?t=</code>); an
+        image link drops in with effects; any other page is scroll-captured. No search used.
+        Added clips stack as candidates; nothing you placed is lost.
       </div>
+      {err && <div className="err" style={{ fontSize: 11, marginBottom: 4 }}>{err}</div>}
 
       {sug?.status === "sourcing" && <div className="muted">sourcing… agents are finding clips for this moment</div>}
       {sug?.status === "error" && <div className="err">{sug.error}</div>}

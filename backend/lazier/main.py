@@ -111,6 +111,8 @@ class PlaceClip(BaseModel):
     source_in: float = 0.0
     source_out: Optional[float] = None
     ken_burns: Optional[bool] = None   # stills: slow zoom (default on for images)
+    beat_id: Optional[str] = None      # link the clip to a beat so it shows in that slot
+    section_id: Optional[str] = None
 
 
 class UpdateClip(BaseModel):
@@ -130,10 +132,17 @@ def _load(pid: str) -> Project:
     return storage.load(pid)
 
 
+_IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"}
+
+
 def _kind_for(filename: str, info: dict) -> str:
+    # ffprobe reports a still image as a single-frame VIDEO stream, so trust the extension
+    # for known image types first — otherwise every uploaded jpg/png becomes a "video".
+    if Path(filename).suffix.lower() in _IMG_EXTS:
+        return "image"
     if info.get("has_video"):
         return "video"
-    if info.get("has_audio") and not info.get("has_video"):
+    if info.get("has_audio"):
         return "audio"
     return "image"
 
@@ -318,10 +327,13 @@ def place_clip(pid: str, body: PlaceClip):
     if end <= start:
         raise HTTPException(400, "timeline_end must be after timeline_start")
 
-    clip = Clip(track_id=track.id, asset_id=asset.id, timeline_start=start,
-                timeline_end=end, source_in=body.source_in, source_out=body.source_out)
+    clip = Clip(track_id=track.id, asset_id=asset.id, beat_id=body.beat_id,
+                section_id=body.section_id, timeline_start=start, timeline_end=end,
+                source_in=body.source_in, source_out=body.source_out)
     if asset.kind == "image":   # slow zoom on stills unless explicitly turned off
         clip.transforms.ken_burns = True if body.ken_burns is None else body.ken_burns
+    if body.beat_id:            # a beat holds one clip — replace whatever was there
+        track.clips = [c for c in track.clips if c.beat_id != body.beat_id]
     track.clips.append(clip)
     storage.save(p)
     return clip
@@ -457,9 +469,12 @@ def _place_candidate(project: Project, beat: Beat, cand: Candidate) -> None:
     asset = project.assets.get(cand.asset_id)
     beat_len = beat.end - beat.start
     so = min(asset.duration, beat_len) if asset and asset.duration else None
-    vt.clips.append(Clip(track_id=vt.id, asset_id=cand.asset_id, beat_id=beat.id,
-                         section_id=beat.section_id, timeline_start=beat.start,
-                         timeline_end=beat.end, source_in=0.0, source_out=so))
+    clip = Clip(track_id=vt.id, asset_id=cand.asset_id, beat_id=beat.id,
+                section_id=beat.section_id, timeline_start=beat.start,
+                timeline_end=beat.end, source_in=0.0, source_out=so)
+    if asset and asset.kind == "image":   # stills get slow zoom so they aren't dead frames
+        clip.transforms.ken_burns = True
+    vt.clips.append(clip)
 
 
 async def _apply(pid: str, sug: Suggestion, assets: list[MediaAsset], place: bool) -> None:
