@@ -265,10 +265,15 @@ def _url_media_kind(url: str) -> Optional[str]:
     return guess                                    # HEAD blocked/blank -> trust the extension
 
 
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+       "Chrome/149.0.0.0 Safari/537.36")
+
+
 def _download(url: str, dest, max_bytes: int = 80_000_000):
     dest.parent.mkdir(parents=True, exist_ok=True)
     total = 0
-    with httpx.stream("GET", url, follow_redirects=True, timeout=30) as r:
+    with httpx.stream("GET", url, follow_redirects=True, timeout=30,
+                      headers={"User-Agent": _UA}) as r:
         r.raise_for_status()
         with dest.open("wb") as f:
             for chunk in r.iter_bytes(65536):
@@ -306,12 +311,14 @@ def clip_video_url(project: Project, beat: Beat, url: str,
                        name=urlparse(url).path.rsplit("/", 1)[-1] or "video",
                        source_url=url, license="user_provided")
     rel = f"media/sourced/{asset.id}.mp4"
-    (pdir / rel).parent.mkdir(parents=True, exist_ok=True)
-    _emit(on_event, beat_id=beat.id, msg=f"clipping video URL @ {start_at:.0f}s")
-    cmd = [config.FFMPEG, "-y", "-ss", f"{start_at:.2f}", "-i", src, "-t", f"{clip_len:.2f}",
+    raw = pdir / f"media/sourced/{asset.id}.raw"
+    _emit(on_event, beat_id=beat.id, msg=f"downloading video URL @ {start_at:.0f}s")
+    _download(src, raw, max_bytes=300_000_000)   # download then trim the LOCAL file (reliable seek)
+    cmd = [config.FFMPEG, "-y", "-ss", f"{start_at:.2f}", "-i", str(raw), "-t", f"{clip_len:.2f}",
            "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
            "-preset", "veryfast", "-crf", "23", str(pdir / rel)]
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    raw.unlink(missing_ok=True)
     if res.returncode != 0 or not (pdir / rel).exists():
         tail = " ".join((res.stderr or "").strip().splitlines()[-3:])
         raise youtube.SourcingError(f"could not clip video URL: {tail[:150]}",
