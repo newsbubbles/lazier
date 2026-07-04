@@ -115,6 +115,9 @@ input, select {
 .dropdown-menu button { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 8px 10px; }
 .dropdown-menu button:hover:not(:disabled) { background: var(--panel); }
 .dropdown-menu .dd-sub { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
+.dropdown-menu .dd-toggle { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-size: 13px; cursor: pointer; }
+.dropdown-menu .dd-toggle input { width: auto; }
+.dropdown-menu .dd-sep { height: 1px; background: var(--border); margin: 3px 4px; }
 .wf { padding: 6px 12px; }
 h3 { margin: 14px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
 h2 { margin: 0 0 12px; }

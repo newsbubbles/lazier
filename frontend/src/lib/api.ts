@@ -104,6 +104,12 @@ export const api = {
   chapters: (id: string) =>
     fetch(`/api/projects/${id}/chapters`).then(j<{ text: string; file: string }>),
 
+  setVoiceEnhance: (id: string, enabled: boolean) =>
+    fetch(`/api/projects/${id}/voice-enhance`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }).then(j<Project>),
+
   makeShort: (id: string) =>
     fetch(`/api/projects/${id}/shorts`, { method: "POST" }).then(
       j<{ video: string; caption_url: string; hook: string; social_caption: string;

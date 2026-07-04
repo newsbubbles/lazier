@@ -147,6 +147,11 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   };
   // selecting a beat opens the clips drawer on mobile (no-op visually on desktop)
   const selectBeat = (id: string | null) => { setSelectedBeat(id); if (id) setRightOpen(true); };
+  const toggleVoice = async (enabled: boolean) => {
+    setErr("");
+    try { setProject(await api.setVoiceEnhance(projectId, enabled)); }
+    catch (e: any) { setErr(e.message); }
+  };
 
   return (
     <div className="editor">
@@ -226,6 +231,12 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
                 <>
                   <div className="dropdown-backdrop" onClick={() => setExportOpen(false)} />
                   <div className="dropdown-menu">
+                    <label className="dd-toggle">
+                      <input type="checkbox" checked={!!project.voice_enhance}
+                             onChange={(e) => toggleVoice(e.target.checked)} />
+                      Enhance voice <span className="dd-sub">podcast vocal chain</span>
+                    </label>
+                    <div className="dd-sep" />
                     <button onClick={() => { setExportOpen(false); doFull(); }}>
                       Full <span className="dd-sub">video + short + chapters</span>
                     </button>

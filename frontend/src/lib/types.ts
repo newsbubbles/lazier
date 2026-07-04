@@ -57,7 +57,7 @@ export interface Project {
   width: number; height: number; fps: number; created_at: number;
   audio_asset_id: string | null; budget_cap: number;
   rights_posture: string; media_pool_path: string | null;
-  tone: string; reference_date: string; video_summary: string;
+  tone: string; reference_date: string; video_summary: string; voice_enhance: boolean;
   assets: Record<string, MediaAsset>;
   transcript: Transcript | null;
   segments: Segment[]; sections: Section[]; beats: Beat[];

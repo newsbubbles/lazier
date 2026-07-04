@@ -175,6 +175,7 @@ class Project(BaseModel):
     tone: str = ""                          # Nate's tone/style intent (director context)
     reference_date: str = ""                # optional "video is about <date>" (news time-scoping)
     video_summary: str = ""                 # thesis/throughline, generated after transcription
+    voice_enhance: bool = False             # apply the podcast vocal chain to the voice at render
 
     assets: dict[str, MediaAsset] = Field(default_factory=dict)
     transcript: Optional[Transcript] = None

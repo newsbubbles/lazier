@@ -164,7 +164,11 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
 
     # audio: master + positioned clips, optional ducking under the voice
     aclips = _audio_clips(project)
-    amix_inputs: list[str] = ["0:a"]
+    voice = "0:a"
+    if project.voice_enhance:                 # podcast vocal chain on the voice spine
+        filt.append(f"[0:a]{config.VOICE_CHAIN}[voice]")
+        voice = "voice"
+    amix_inputs: list[str] = [voice]
     duck_streams: list[str] = []
     for j, (c, duck, gain) in enumerate(aclips):
         asset = project.assets.get(c.asset_id)
@@ -192,7 +196,7 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
         amix_inputs.append(ducked)
 
     if len(amix_inputs) == 1:
-        amap = "0:a"            # raw input stream: no brackets in -map
+        amap = f"[{voice}]" if project.voice_enhance else "0:a"   # label needs brackets; raw doesn't
     else:
         joined = "".join(f"[{s}]" for s in amix_inputs)
         filt.append(f"{joined}amix=inputs={len(amix_inputs)}:normalize=0:duration=longest,"
@@ -334,7 +338,8 @@ def _build_short_command(project: Project, out_path: Path, ass_name: str,
     filter_path.write_text(";".join(filt), encoding="utf-8")
     return [config.FFMPEG, "-y", *inputs,
             "-filter_complex_script", str(filter_path),
-            "-map", "[vout]", "-map", "0:a", "-af", "loudnorm",
+            "-map", "[vout]", "-map", "0:a",
+            "-af", (config.VOICE_CHAIN if project.voice_enhance else "loudnorm"),
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "20",
             "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", "-movflags", "+faststart",
             str(out_path)]

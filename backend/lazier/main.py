@@ -424,6 +424,19 @@ async def render_export(pid: str):
     return {"video": f"/files/{pid}/{res['video']}", "srt": f"/files/{pid}/captions.srt"}
 
 
+class VoiceEnhanceBody(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/projects/{pid}/voice-enhance")
+def set_voice_enhance(pid: str, body: VoiceEnhanceBody):
+    """Toggle the podcast vocal chain — applied to the voice at render/export time."""
+    p = _load(pid)
+    p.voice_enhance = body.enabled
+    storage.save(p)
+    return p
+
+
 @app.post("/api/projects/{pid}/shorts")
 def make_short(pid: str):
     """Pick the best ~30s window (agent) and render one 9:16 captioned short to

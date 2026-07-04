@@ -98,6 +98,16 @@ SHORTS_MIN_SECONDS = float(os.environ.get("LAZIER_SHORTS_MIN", "15"))
 SHORTS_MAX_SECONDS = float(os.environ.get("LAZIER_SHORTS_MAX", "60"))
 SHORTS_MODEL = os.environ.get("LAZIER_SHORTS_MODEL", DIRECTOR_MODEL)
 
+# podcast vocal chain — applied to the voice spine at render when project.voice_enhance.
+# One ffmpeg -af graph: HPF -> denoise -> de-ess -> EQ -> compressor -> loudnorm -> limiter.
+AUDIO_LUFS = float(os.environ.get("LAZIER_AUDIO_LUFS", "-14"))   # YouTube/shorts target
+_DEFAULT_VOICE_CHAIN = (
+    "highpass=f=85,afftdn=nr=12:nf=-25,deesser=i=0.35,"
+    "equalizer=f=250:t=q:w=1.0:g=-3,equalizer=f=4000:t=q:w=1.5:g=3,highshelf=f=10000:g=2,"
+    "acompressor=threshold=-18dB:ratio=3:attack=15:release=160:makeup=5,"
+    f"loudnorm=I={AUDIO_LUFS}:TP=-1:LRA=11,alimiter=limit=0.95")
+VOICE_CHAIN = os.environ.get("LAZIER_VOICE_CHAIN", _DEFAULT_VOICE_CHAIN)
+
 # --- canvas presets ----------------------------------------------------------
 ASPECT_PRESETS: dict[str, tuple[int, int]] = {
     "16:9": (1920, 1080),
