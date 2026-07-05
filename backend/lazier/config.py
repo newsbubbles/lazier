@@ -71,6 +71,15 @@ DIRECTOR_MODEL = os.environ.get("LAZIER_DIRECTOR_MODEL", "x-ai/grok-4.20")
 
 # --- sourcing (M2) -----------------------------------------------------------
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+# Clip fetch is two-tier (see youtube._fetch): a fast --download-sections grab first, then a
+# full-download-and-trim fallback only if that's throttled/fails.
+# SECTION_TIMEOUT hard-caps the fast attempt (tree-killed) so a throttled section can't hang.
+SOURCE_SECTION_TIMEOUT = int(os.environ.get("LAZIER_SOURCE_SECTION_TIMEOUT", "25"))
+SOURCE_FULL_TIMEOUT = int(os.environ.get("LAZIER_SOURCE_FULL_TIMEOUT", "300"))
+# Section grab uses native res (it's only the slice); the full-download fallback is capped
+# lower to bound the whole-file download size.
+SOURCE_MAX_HEIGHT = int(os.environ.get("LAZIER_SOURCE_MAX_HEIGHT", "1080"))
+SOURCE_FALLBACK_HEIGHT = int(os.environ.get("LAZIER_SOURCE_FALLBACK_HEIGHT", "720"))
 SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
 FAL_KEY = os.environ.get("FAL_KEY", "")
 # Per section: how many queries, how many clips to actually fetch+verify.

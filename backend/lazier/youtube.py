@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -147,67 +148,113 @@ def parse_youtube_url(url: str) -> tuple[str, float] | None:
     return vid, _parse_timestamp(tval)
 
 
+def _run_bounded(cmd: list[str], timeout: int) -> tuple[int | None, str]:
+    """Run cmd, HARD-killing the whole process tree on timeout. `--download-sections` makes
+    yt-dlp spawn an ffmpeg child that a plain subprocess timeout can't reap — it holds the
+    pipe open, so a 25s cap turns into a multi-minute hang. taskkill /T (Windows) / killpg
+    (POSIX) kills the tree so the cap is real. Returns (returncode|None, output); None = timed
+    out."""
+    kw = {} if sys.platform == "win32" else {"start_new_session": True}
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **kw)
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        return proc.returncode, out
+    except subprocess.TimeoutExpired:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            import os
+            import signal
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
+        try:
+            out, _ = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            out = ""
+        return None, out
+
+
+def _vfmt(h: int) -> str:
+    return (f"bv*[height<={h}][ext=mp4]+ba[ext=m4a]/b[height<={h}][ext=mp4]/"
+            f"bv*[height<={h}]+ba/b[height<={h}]/b")
+
+
+def _trim(src: Path, out: Path, seconds: float, seek: float, audio: bool) -> None:
+    """Trim `seconds` from `src` (optionally seeking to `seek`) and normalize for clean
+    compositing. Video -> h264/yuv420p/30fps (no audio); audio -> 48k stereo aac."""
+    cmd = [config.FFMPEG, "-y"]
+    if seek > 0:
+        cmd += ["-ss", f"{seek:.2f}"]
+    cmd += ["-i", str(src), "-t", f"{seconds:.2f}"]
+    if audio:
+        cmd += ["-vn", "-ac", "2", "-ar", "48000", "-c:a", "aac", "-b:a", "192k"]
+    else:
+        cmd += ["-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+                "-preset", "veryfast", "-crf", "20"]
+    res = subprocess.run(cmd + [str(out)], capture_output=True, text=True, timeout=120)
+    if res.returncode != 0 or not out.exists():
+        tail = " ".join(res.stderr.strip().splitlines()[-3:])[:160]
+        raise SourcingError(f"trim failed: {tail}", "discard this candidate, try the next")
+
+
+def _fetch(video_id: str, seconds: float, out_path: Path, start_at: float,
+           section_fmt: str, full_fmt: str, audio: bool) -> Path:
+    """Two-tier fetch. PRIMARY: the fast `--download-sections` grab (only the needed slice),
+    hard-capped at SOURCE_SECTION_TIMEOUT so a throttled/hung attempt can't stall. FALLBACK
+    (only if that fails): download the FULL source once and trim locally — reliable when
+    YouTube throttles the ranged section request. Errors loudly if BOTH fail."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    end_at = start_at + max(seconds, 1.0)
+    raw = out_path.with_suffix(".raw" + out_path.suffix)
+
+    # 1) fast section grab at native resolution (what worked before), tree-killed at the cap
+    raw.unlink(missing_ok=True)
+    section = ["yt-dlp", "-f", section_fmt, "--download-sections", f"*{start_at:.2f}-{end_at:.2f}",
+               "--no-playlist", "--quiet", "--no-warnings", "-o", str(raw), url]
+    if not audio:
+        section.insert(3, "--force-keyframes-at-cuts")   # frame-accurate cut for video
+    rc, _ = _run_bounded(section, config.SOURCE_SECTION_TIMEOUT)
+    if rc == 0 and raw.exists():
+        try:
+            _trim(raw, out_path, seconds, seek=0.0, audio=audio)  # section already starts at start_at
+            return out_path
+        finally:
+            raw.unlink(missing_ok=True)
+    raw.unlink(missing_ok=True)   # timed out (rc None) or failed -> fall back
+
+    # 2) fallback: full download at a bounded resolution, then trim the window locally
+    full = out_path.with_suffix(".full" + out_path.suffix)
+    full.unlink(missing_ok=True)
+    rc, out = _run_bounded(["yt-dlp", "-f", full_fmt, "--no-playlist", "--quiet", "--no-warnings",
+                            "-o", str(full), url], config.SOURCE_FULL_TIMEOUT)
+    if rc != 0 or not full.exists():
+        full.unlink(missing_ok=True)
+        detail = "download timed out" if rc is None else " ".join(out.strip().splitlines()[-3:])[:160]
+        raise SourcingError(f"yt-dlp could not fetch {video_id}: {detail}",
+                            "try the next search result")
+    try:
+        _trim(full, out_path, seconds, seek=start_at, audio=audio)
+        return out_path
+    finally:
+        full.unlink(missing_ok=True)
+
+
 def fetch_clip(video_id: str, seconds: float, out_path: Path,
                start_at: float = 0.0) -> Path:
-    """Download a section and normalize to a clean mp4 of ~`seconds` length.
-    yt-dlp grabs the section; ffmpeg normalizes codec/fps so it composites cleanly."""
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    raw = out_path.with_suffix(".raw.mp4")
-    end_at = start_at + max(seconds, 1.0)
-    cmd = [
-        "yt-dlp",
-        "-f", "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[height<=720]",
-        "--download-sections", f"*{start_at:.2f}-{end_at:.2f}",
-        "--force-keyframes-at-cuts", "--no-playlist", "--quiet", "--no-warnings",
-        "-o", str(raw), f"https://www.youtube.com/watch?v={video_id}",
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    if res.returncode != 0 or not raw.exists():
-        tail = (res.stderr or res.stdout).strip().splitlines()[-3:]
-        raw.unlink(missing_ok=True)
-        raise SourcingError(f"yt-dlp could not fetch {video_id}: {' '.join(tail)[:160]}",
-                            "discard this candidate and try the next search result")
-    # normalize to h264/yuv420p/30fps, trimmed to the needed length
-    norm = subprocess.run([
-        config.FFMPEG, "-y", "-i", str(raw), "-t", f"{seconds:.2f}",
-        "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
-        "-preset", "veryfast", "-crf", "23", str(out_path),
-    ], capture_output=True, text=True)
-    raw.unlink(missing_ok=True)
-    if norm.returncode != 0 or not out_path.exists():
-        tail = norm.stderr.strip().splitlines()[-3:]
-        raise SourcingError(f"normalize failed for {video_id}: {' '.join(tail)[:160]}",
-                            "discard this candidate and try the next search result")
-    return out_path
+    """Fetch a video clip. Fast section grab at native res first; full-download-and-trim
+    fallback (bounded resolution) only if the section is throttled/fails. See _fetch."""
+    return _fetch(video_id, seconds, out_path, start_at,
+                  section_fmt=_vfmt(config.SOURCE_MAX_HEIGHT),
+                  full_fmt=_vfmt(config.SOURCE_FALLBACK_HEIGHT), audio=False)
 
 
 def fetch_audio(video_id: str, seconds: float, out_path: Path,
                 start_at: float = 0.0) -> Path:
-    """Download an AUDIO section and normalize to a clean 48k stereo m4a of ~`seconds`.
-    Same shape as fetch_clip but audio-only (no video stream) — used for music/SFX cues.
-    No API key, no quota."""
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    raw = out_path.with_suffix(".raw.m4a")
-    end_at = start_at + max(seconds, 1.0)
-    cmd = [
-        "yt-dlp", "-f", "ba[ext=m4a]/ba/bestaudio",
-        "--download-sections", f"*{start_at:.2f}-{end_at:.2f}",
-        "--no-playlist", "--quiet", "--no-warnings",
-        "-o", str(raw), f"https://www.youtube.com/watch?v={video_id}",
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    if res.returncode != 0 or not raw.exists():
-        tail = (res.stderr or res.stdout).strip().splitlines()[-3:]
-        raw.unlink(missing_ok=True)
-        raise SourcingError(f"yt-dlp could not fetch audio {video_id}: {' '.join(tail)[:160]}",
-                            "discard this candidate and try the next search result")
-    norm = subprocess.run([
-        config.FFMPEG, "-y", "-i", str(raw), "-t", f"{seconds:.2f}",
-        "-vn", "-ac", "2", "-ar", "48000", "-c:a", "aac", "-b:a", "192k", str(out_path),
-    ], capture_output=True, text=True)
-    raw.unlink(missing_ok=True)
-    if norm.returncode != 0 or not out_path.exists():
-        tail = norm.stderr.strip().splitlines()[-3:]
-        raise SourcingError(f"audio normalize failed for {video_id}: {' '.join(tail)[:160]}",
-                            "discard this candidate and try the next search result")
+    """Fetch an audio clip (music/SFX cue). Same two-tier fetch as fetch_clip, audio-only."""
+    return _fetch(video_id, seconds, out_path, start_at,
+                  section_fmt="ba[ext=m4a]/ba/bestaudio",
+                  full_fmt="ba[ext=m4a]/ba/bestaudio", audio=True)
     return out_path
