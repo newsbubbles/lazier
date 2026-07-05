@@ -216,7 +216,7 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
            "-filter_complex_script", str(filter_path),
            "-map", "[vout]", "-map", amap,
            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", preset, "-crf", crf,
-           "-c:a", "aac", "-b:a", "192k",
+           "-c:a", "aac", "-b:a", "192k", "-ar", "48000",   # pin 48k (loudnorm upsamples otherwise)
            "-t", f"{total:.3f}", "-movflags", "+faststart"]
     if height:  # proxy: dense keyframes so scrub-seek snaps instantly to the playhead
         gop = max(int(fps_val // 2), 5)
@@ -341,8 +341,8 @@ def _build_short_command(project: Project, out_path: Path, ass_name: str,
             "-map", "[vout]", "-map", "0:a",
             "-af", (config.VOICE_CHAIN if project.voice_enhance else "loudnorm"),
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "20",
-            "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", "-movflags", "+faststart",
-            str(out_path)]
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-t", f"{total:.3f}",
+            "-movflags", "+faststart", str(out_path)]
 
 
 def render_short(project: Project, plan) -> dict:
