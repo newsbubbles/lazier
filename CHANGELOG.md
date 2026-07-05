@@ -9,8 +9,21 @@ Work accumulates under **Unreleased** and is cut into a version when tagged.
 ## [Unreleased]
 
 ### Added
+- **Sound design.** A **Sound Director** agent plans a sparse set of music beds + SFX cues
+  over the whole video (tone-matched, ducked under the voice, aligned to beat boundaries),
+  fed a deterministic quiet-moment map so swells land in the silences. Sourced via **yt-dlp
+  audio** (no key, license-gated by `rights_posture`); Freesound/Pixabay are pluggable once
+  keyed. Music + SFX get their own reduced-height timeline rows and a **SoundPanel** (waveform
+  audition, Find sounds, paste-URL, per-clip level / duck / timing-nudge). Render mixes the
+  extra tracks with per-clip gain, fades, align-offset, and optional **diegetic video audio**.
 - Spacebar toggles timeline play/pause (ignored while typing in a text field).
 - Editor screenshot in the README.
+
+### Fixed
+- Preview playback was silent for placed music/SFX: the editor played the voice-only master
+  through the waveform while the proxy video (which holds the full mix) was muted. Now a
+  rendered proxy plays its own audio and the waveform is muted, so the preview matches the
+  export.
 
 ## [0.1.0] - 2026-07-02
 

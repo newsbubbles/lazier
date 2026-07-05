@@ -179,3 +179,35 @@ def fetch_clip(video_id: str, seconds: float, out_path: Path,
         raise SourcingError(f"normalize failed for {video_id}: {' '.join(tail)[:160]}",
                             "discard this candidate and try the next search result")
     return out_path
+
+
+def fetch_audio(video_id: str, seconds: float, out_path: Path,
+                start_at: float = 0.0) -> Path:
+    """Download an AUDIO section and normalize to a clean 48k stereo m4a of ~`seconds`.
+    Same shape as fetch_clip but audio-only (no video stream) — used for music/SFX cues.
+    No API key, no quota."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    raw = out_path.with_suffix(".raw.m4a")
+    end_at = start_at + max(seconds, 1.0)
+    cmd = [
+        "yt-dlp", "-f", "ba[ext=m4a]/ba/bestaudio",
+        "--download-sections", f"*{start_at:.2f}-{end_at:.2f}",
+        "--no-playlist", "--quiet", "--no-warnings",
+        "-o", str(raw), f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    if res.returncode != 0 or not raw.exists():
+        tail = (res.stderr or res.stdout).strip().splitlines()[-3:]
+        raw.unlink(missing_ok=True)
+        raise SourcingError(f"yt-dlp could not fetch audio {video_id}: {' '.join(tail)[:160]}",
+                            "discard this candidate and try the next search result")
+    norm = subprocess.run([
+        config.FFMPEG, "-y", "-i", str(raw), "-t", f"{seconds:.2f}",
+        "-vn", "-ac", "2", "-ar", "48000", "-c:a", "aac", "-b:a", "192k", str(out_path),
+    ], capture_output=True, text=True)
+    raw.unlink(missing_ok=True)
+    if norm.returncode != 0 or not out_path.exists():
+        tail = norm.stderr.strip().splitlines()[-3:]
+        raise SourcingError(f"audio normalize failed for {video_id}: {' '.join(tail)[:160]}",
+                            "discard this candidate and try the next search result")
+    return out_path

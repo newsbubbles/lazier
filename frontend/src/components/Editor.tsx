@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import type { Project } from "../lib/types";
 import { Timeline } from "./Timeline";
 import { SuggestionPanel } from "./SuggestionPanel";
+import { SoundPanel } from "./SoundPanel";
 
 export function Editor({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const [project, setProject] = useState<Project | null>(null);
@@ -11,6 +12,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   const [pxPerSec, setPxPerSec] = useState(90);
   const [log, setLog] = useState<string[]>([]);
   const [selectedBeat, setSelectedBeat] = useState<string | null>(null);
+  const [selectedCue, setSelectedCue] = useState<string | null>(null);
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState("");
@@ -28,7 +30,10 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
   const cursorRef = useRef(0);
   cursorRef.current = cursor;
 
-  // M3: the proxy video is a muted layer slaved to the waveform's audio clock.
+  // The proxy video is slaved to the waveform's clock. BEFORE a render exists it's silent
+  // and the waveform plays the voice spine. ONCE a proxy is rendered it already contains the
+  // full mix (voice + music + SFX), so we unmute the video and mute the waveform — otherwise
+  // you'd hear the voice-only master and never the music/SFX you placed.
   // Scrub the timeline -> video seeks; play -> both run; light drift correction.
   useEffect(() => {
     const v = videoRef.current;
@@ -71,11 +76,16 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
       else if (m.stage === "source_done") { srcDone.current += 1; if (srcTotal.current) setPct(srcDone.current / srcTotal.current); line = `✓ section sourced (${m.candidates} clips)`; }
       else if (m.stage === "source_all_start") { srcTotal.current = m.count; srcDone.current = 0; setPct(0); line = `sourcing ${m.count} sections…`; }
       else if (m.stage === "source_all_done") line = `done sourcing all`;
+      else if (m.stage === "sound" && m.msg) line = `♪ ${m.msg}`;
+      else if (m.stage === "sound_planned") line = `♪ sound director planned ${m.cues} cues`;
+      else if (m.stage === "sound_all_start") { srcTotal.current = m.count; srcDone.current = 0; setPct(0); line = `sourcing ${m.count} sound cues…`; }
+      else if (m.stage === "sound_done") { srcDone.current += 1; if (srcTotal.current) setPct(srcDone.current / srcTotal.current); line = `♪ cue sourced (${m.candidates})`; }
+      else if (m.stage === "sound_all_done") line = `done sourcing sound`;
       else if (m.stage === "error") line = `ERROR: ${m.error}`;
       else line = JSON.stringify(m);
       setLog((l) => [...l.slice(-80), line]);
-      if (["done", "source_done", "source_all_done", "error"].includes(m.stage)) reload();
-      if (["done", "source_all_done"].includes(m.stage)) { setBusy(""); setPct(null); }
+      if (["done", "source_done", "source_all_done", "sound_planned", "sound_done", "sound_all_done", "error"].includes(m.stage)) reload();
+      if (["done", "source_all_done", "sound_all_done"].includes(m.stage)) { setBusy(""); setPct(null); }
     };
     return () => ws.close();
   }, [projectId]);
@@ -84,6 +94,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
 
   const audioAsset = project.audio_asset_id ? project.assets[project.audio_asset_id] : null;
   const beatObj = project.beats.find((b) => b.id === selectedBeat) || null;
+  const cueObj = project.sound_cues?.find((c) => c.id === selectedCue) || null;
   const sourcedCount = project.tracks.find((t) => t.kind === "visual")?.clips.filter(c => c.beat_id).length ?? 0;
 
   const onAudio = async (f: File) => {
@@ -145,8 +156,14 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
     } catch (e: any) { setErr(e.message); }
     setBusy(""); setPct(null);
   };
-  // selecting a beat opens the clips drawer on mobile (no-op visually on desktop)
-  const selectBeat = (id: string | null) => { setSelectedBeat(id); if (id) setRightOpen(true); };
+  const soundAll = async () => {
+    setErr(""); setBusy("scoring sound"); setPct(0);
+    try { await api.soundSourceAll(projectId, notes); } catch (e: any) { setErr(e.message); setBusy(""); setPct(null); }
+  };
+  // selecting a beat opens the clips drawer on mobile (no-op visually on desktop); beat and
+  // cue selection are mutually exclusive (one right-panel).
+  const selectBeat = (id: string | null) => { setSelectedBeat(id); setSelectedCue(null); if (id) setRightOpen(true); };
+  const selectCue = (id: string | null) => { setSelectedCue(id); setSelectedBeat(null); if (id) setRightOpen(true); };
   const toggleVoice = async (enabled: boolean) => {
     setErr("");
     try { setProject(await api.setVoiceEnhance(projectId, enabled)); }
@@ -213,6 +230,16 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
                 {sourcedCount}/{project.beats.length} beats have a clip. Agents find b-roll
                 reactive to each moment; click any beat to review or swap.
               </div>
+
+              <h3>Sound design</h3>
+              <button className="primary" onClick={soundAll} disabled={!!busy} style={{ width: "100%" }}>
+                🎚 {project.sound_cues?.length ? "Re-score sound" : "Score music + SFX"}
+              </button>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                {project.sound_cues?.length
+                  ? `${project.sound_cues.length} cues planned. Click a cue on the Music/SFX rows to audition or swap.`
+                  : "A sound director plans a sparse set of music beds + SFX stingers, ducked under your voice."}
+              </div>
             </>
           )}
 
@@ -253,7 +280,7 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
           </div>
 
           <div className="viewport">
-            <video ref={videoRef} src={proxyUrl ?? undefined} muted playsInline
+            <video ref={videoRef} src={proxyUrl ?? undefined} muted={!proxyUrl} playsInline
                    style={{ display: proxyUrl ? "block" : "none" }}
                    onLoadedMetadata={(e) => { e.currentTarget.currentTime = cursorRef.current; }} />
             {!proxyUrl && <div className="empty">Render preview, then scrub or play the timeline — the video follows the audio.</div>}
@@ -261,15 +288,18 @@ export function Editor({ projectId, onClose }: { projectId: string; onClose: () 
 
           {audioAsset
             ? <Timeline project={project} pxPerSec={pxPerSec} onZoom={setPxPerSec} cursor={cursor} onCursor={setCursor}
-                        onPlaying={onPlaying} selectedBeatId={selectedBeat} onSelectBeat={selectBeat} />
+                        onPlaying={onPlaying} selectedBeatId={selectedBeat} onSelectBeat={selectBeat}
+                        selectedCueId={selectedCue} onSelectCue={selectCue} hasProxy={!!proxyUrl} />
             : <div className="bottom" style={{ padding: 20 }}><span className="muted">Upload audio to build the timeline.</span></div>}
         </div>
 
         <div className={`sugcol${rightOpen ? " open" : ""}`}>
-          {beatObj
+          {cueObj
+            ? <SoundPanel project={project} cue={cueObj} busy={!!busy} onChanged={reload} />
+            : beatObj
             ? <SuggestionPanel project={project} beat={beatObj} notes={notes} busy={!!busy}
                                onChanged={reload} cursor={cursor} playing={playing} />
-            : <div className="sp-empty muted">Click a beat on the timeline to see clip suggestions for that moment, or hit Auto-source all beats.</div>}
+            : <div className="sp-empty muted">Click a beat to see clip suggestions, or a Music/SFX cue to audition sound for that moment.</div>}
         </div>
       </div>
       {err && <div className="err" style={{ padding: "6px 16px" }}>{err}</div>}

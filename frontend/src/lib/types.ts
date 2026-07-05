@@ -40,10 +40,27 @@ export interface Suggestion {
 
 export interface Clip {
   id: string; track_id: string; asset_id: string;
-  beat_id: string | null; section_id: string | null;
+  beat_id: string | null; section_id: string | null; cue_id: string | null;
   timeline_start: number; timeline_end: number;
   source_in: number; source_out: number | null;
   transforms: Transforms; effects: Effects; z_order: number;
+  gain: number; duck: boolean | null; align_offset: number; audio_enabled: boolean;
+}
+
+export type SoundKind = "music" | "effect";
+export interface SoundCue {
+  id: string; start: number; end: number; kind: SoundKind;
+  intent: string; brief: string; search_terms: string[];
+  anchor: number; dynamics: string; duck: boolean; rationale: string;
+}
+export interface SoundCandidate {
+  asset_id: string; source: string; title: string; rationale: string;
+  fit_score: number; duration: number; waveform: string; license: string; flags: string[];
+}
+export interface SoundSuggestion {
+  id: string; cue_id: string;
+  status: "sourcing" | "ready" | "error" | "empty";
+  candidates: SoundCandidate[]; recommended_index: number; error: string; queries: string[];
 }
 
 export type TrackKind = "visual" | "audio" | "caption" | "overlay";
@@ -62,6 +79,8 @@ export interface Project {
   transcript: Transcript | null;
   segments: Segment[]; sections: Section[]; beats: Beat[];
   suggestions: Record<string, Suggestion>;
+  sound_cues: SoundCue[];
+  sound_suggestions: Record<string, SoundSuggestion>;
   tracks: Track[];
 }
 

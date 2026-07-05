@@ -79,11 +79,14 @@ def _visual_clips(project: Project) -> list[Clip]:
 
 
 def _audio_clips(project: Project) -> list[tuple[Clip, bool, float]]:
+    """(clip, effective_duck, effective_gain) for every audio-track clip. Per-clip duck/gain
+    override the track's; align_offset is applied at placement time in the build, not here."""
     out = []
     for t in project.tracks:
         if t.kind == "audio":
             for c in t.clips:
-                out.append((c, t.duck, t.gain))
+                duck = t.duck if c.duck is None else c.duck
+                out.append((c, duck, t.gain * c.gain))
     return out
 
 
@@ -117,6 +120,7 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
 
     vclips = _visual_clips(project)
     vlabels: list[tuple[str, float, float]] = []  # (label, start, end)
+    diegetic: list[tuple[int, Clip]] = []         # (input_idx, clip) for videos playing own audio
     idx = 1
     for c in vclips:
         asset = project.assets.get(c.asset_id)
@@ -127,6 +131,9 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
         end = c.timeline_end
         dur = max(end - start, 0.04)
         lbl = f"v{idx}"
+
+        if asset.kind != "image" and c.audio_enabled:
+            diegetic.append((idx, c))   # this video's :a joins the mix (interview soundbite)
 
         if asset.kind == "image":
             inputs += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
@@ -170,24 +177,42 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
         voice = "voice"
     amix_inputs: list[str] = [voice]
     duck_streams: list[str] = []
+
+    def _positioned(src: str, c: Clip, gain: float, lab: str) -> None:
+        """Trim a source :a stream to the clip's window, gain + fade it, and delay it to the
+        clip's timeline position (nudged by align_offset). src is a filtergraph input like
+        '[3:a]'. Appends the chain and records the label for mixing."""
+        si = c.source_in
+        so = c.source_out if c.source_out is not None else si + (c.timeline_end - c.timeline_start)
+        win = max(so - si, 0.04)
+        start = max(c.timeline_start + c.align_offset, 0.0)
+        delay_ms = int(round(start * 1000))
+        chain = (f"{src}atrim=start={si:.3f}:end={so:.3f},asetpts=PTS-STARTPTS,"
+                 f"volume={gain:.3f}")
+        if c.effects.fade_in > 0:
+            chain += f",afade=t=in:st=0:d={min(c.effects.fade_in, win):.3f}"
+        if c.effects.fade_out > 0:
+            fo = min(c.effects.fade_out, win)
+            chain += f",afade=t=out:st={max(win - fo, 0):.3f}:d={fo:.3f}"
+        chain += f",adelay={delay_ms}|{delay_ms}[{lab}]"
+        filt.append(chain)
+
     for j, (c, duck, gain) in enumerate(aclips):
         asset = project.assets.get(c.asset_id)
         if not asset:
             continue
-        path = str(pdir / asset.local_path)
-        si = c.source_in
-        so = c.source_out if c.source_out is not None else si + (c.timeline_end - c.timeline_start)
-        delay_ms = int(c.timeline_start * 1000)
+        inputs += ["-i", str(pdir / asset.local_path)]
         lab = f"a{j}"
-        inputs += ["-i", path]
-        achain = (f"[{idx}:a]atrim=start={si:.3f}:end={so:.3f},asetpts=PTS-STARTPTS,"
-                  f"volume={gain:.3f},adelay={delay_ms}|{delay_ms}[{lab}]")
-        filt.append(achain)
-        if duck:
-            duck_streams.append(lab)
-        else:
-            amix_inputs.append(lab)
+        _positioned(f"[{idx}:a]", c, gain, lab)
+        (duck_streams if duck else amix_inputs).append(lab)
         idx += 1
+
+    # diegetic: selected VIDEO clips play their own audio (interview soundbite), ducked under
+    # the voice by default. The video file is already an input (recorded in `diegetic`).
+    for m, (vidx, c) in enumerate(diegetic):
+        lab = f"g{m}"
+        _positioned(f"[{vidx}:a]", c, c.gain, lab)
+        (amix_inputs if c.duck is False else duck_streams).append(lab)
 
     # duck each ducked stream under the master voice, then mix everything
     for k, lab in enumerate(duck_streams):

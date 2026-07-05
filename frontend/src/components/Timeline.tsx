@@ -21,6 +21,7 @@ const StopIcon = () => (
 // Clicking a chapter or a beat seeks the master audio there (scrub by section/beat).
 export function Timeline({
   project, pxPerSec, onZoom, cursor, onCursor, onPlaying, selectedBeatId, onSelectBeat,
+  selectedCueId, onSelectCue, hasProxy,
 }: {
   project: Project;
   pxPerSec: number;
@@ -30,6 +31,9 @@ export function Timeline({
   onPlaying?: (playing: boolean) => void;
   selectedBeatId: string | null;
   onSelectBeat: (bid: string) => void;
+  selectedCueId: string | null;
+  onSelectCue: (cid: string) => void;
+  hasProxy: boolean;   // a rendered proxy exists -> it carries the full mix; mute the waveform
 }) {
   const waveRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -38,6 +42,8 @@ export function Timeline({
   const [playing, setPlaying] = useState(false);
   const ppsRef = useRef(pxPerSec);
   ppsRef.current = pxPerSec;
+  const hasProxyRef = useRef(hasProxy);
+  hasProxyRef.current = hasProxy;
 
   const duration = project.transcript?.duration
     || (project.audio_asset_id ? project.assets[project.audio_asset_id]?.duration : 0) || 0;
@@ -52,6 +58,13 @@ export function Timeline({
     return map;
   }, [project]);
 
+  const clipByCue = useMemo(() => {
+    const map = new Map<string, Clip>();
+    project.tracks.filter((t) => t.kind === "audio")
+      .forEach((t) => t.clips.forEach((c) => c.cue_id && map.set(c.cue_id, c)));
+    return map;
+  }, [project]);
+
   useEffect(() => {
     if (!waveRef.current || !audioUrl) return;
     const ws = WaveSurfer.create({
@@ -60,6 +73,7 @@ export function Timeline({
       waveColor: "#46506a", progressColor: "#5b78b0", cursorWidth: 0,
     });
     wsRef.current = ws;
+    ws.setMuted(hasProxyRef.current);   // if a proxy carries the mix, the waveform is silent (clock only)
     ws.on("audioprocess", (t: number) => onCursor(t));
     ws.on("seeking", (t: number) => onCursor(t));
     ws.on("play", () => { setPlaying(true); onPlaying?.(true); });
@@ -68,6 +82,10 @@ export function Timeline({
     return () => { ws.destroy(); wsRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl]);
+
+  // once a proxy renders (or is cleared) flip the waveform's audio: the proxy video plays the
+  // full mix, so the waveform must go silent to avoid doubling the voice.
+  useEffect(() => { wsRef.current?.setMuted(hasProxy); }, [hasProxy]);
 
   // spacebar toggles play/pause (unless you're typing in a field or on a button, which
   // already handle space themselves).
@@ -172,6 +190,39 @@ export function Timeline({
     return "var(--border)";
   };
 
+  const cueColor = (cid: string) => {
+    if (clipByCue.has(cid)) return "var(--good)";
+    const st = project.sound_suggestions?.[cid]?.status;
+    if (st === "sourcing") return "var(--warn)";
+    if (st === "ready") return "var(--accent)";
+    if (st === "error") return "var(--bad)";
+    return "var(--border)";
+  };
+  const soundRow = (kind: "music" | "effect", label: string) => {
+    const cues = (project.sound_cues || []).filter((c) => c.kind === kind);
+    return (
+      <div className="tl-row tl-sounds" onMouseDown={(e) => { if (e.target === e.currentTarget) seekClientX(e.clientX); }}>
+        <span className="tl-rowlabel">{label}</span>
+        {cues.map((c) => {
+          const clip = clipByCue.get(c.id);
+          const wf = clip && project.sound_suggestions?.[c.id]?.candidates
+            ?.find((x) => x.asset_id === clip.asset_id)?.waveform;
+          const w = Math.max((c.end - c.start) * pxPerSec - 2, 8);
+          return (
+            <div key={c.id}
+                 className={`cue ${clip ? "filled" : "empty"} ${selectedCueId === c.id ? "sel" : ""}`}
+                 style={{ left: c.start * pxPerSec, width: w, borderColor: cueColor(c.id) }}
+                 title={`${c.dynamics}: ${c.brief}`}
+                 onClick={() => { onSelectCue(c.id); seek(c.start); }}>
+              {wf && <img src={api.fileUrl(project.id, wf)} alt="" />}
+              <span className="cue-cap">{c.dynamics}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   const ticks: number[] = [];
   for (let s = 0; s <= duration; s += 5) ticks.push(s);
 
@@ -230,6 +281,14 @@ export function Timeline({
               );
             })}
           </div>
+
+          {/* sound design: music beds + SFX cues (reduced-height rows so mobile fits) */}
+          {(project.sound_cues?.length ?? 0) > 0 && (
+            <>
+              {soundRow("music", "♪")}
+              {soundRow("effect", "✷")}
+            </>
+          )}
 
           <div className="tl-playhead" style={{ left: cursor * pxPerSec }} />
         </div>

@@ -13,10 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, direction, render, segmentation, sourcing, storage, transcribe
+from . import (config, direction, render, segmentation, sounddirection, soundsourcing,
+               sourcing, storage, transcribe, youtube)
 from .media_probe import probe
 from .models import (Beat, BeatPlan, Candidate, Clip, Effects, MediaAsset, Project, Section,
-                     Suggestion, Transforms)
+                     SoundCandidate, SoundCue, SoundSuggestion, Suggestion, Transforms)
 
 _apply_lock = asyncio.Lock()
 
@@ -124,6 +125,10 @@ class UpdateClip(BaseModel):
     fade_in: Optional[float] = None
     fade_out: Optional[float] = None
     ken_burns: Optional[bool] = None
+    gain: Optional[float] = None            # audio clip: per-clip linear gain
+    duck: Optional[bool] = None             # audio clip: override track ducking
+    align_offset: Optional[float] = None    # audio clip: manual timing nudge (s)
+    audio_enabled: Optional[bool] = None    # video clip: play its own (diegetic) audio
 
 
 # --- helpers -----------------------------------------------------------------
@@ -374,6 +379,14 @@ def update_clip(pid: str, clip_id: str, body: UpdateClip):
         clip.effects.fade_out = body.fade_out
     if body.ken_burns is not None:
         clip.transforms.ken_burns = body.ken_burns
+    if body.gain is not None:
+        clip.gain = max(body.gain, 0.0)
+    if body.duck is not None:
+        clip.duck = body.duck
+    if body.align_offset is not None:
+        clip.align_offset = body.align_offset
+    if body.audio_enabled is not None:
+        clip.audio_enabled = body.audio_enabled
     if clip.timeline_end <= clip.timeline_start:
         raise HTTPException(400, "timeline_end must be after timeline_start")
     storage.save(p)
@@ -664,3 +677,202 @@ def accept_candidate(pid: str, bid: str, body: AcceptBody):
     _place_candidate(p, beat, sug.candidates[body.candidate_index])
     storage.save(p)
     return p
+
+
+# --- sound design (music + SFX cues on the audio tracks) ---------------------
+# Default placement gains: a music bed sits well under the voice; an SFX one-shot a bit louder.
+_MUSIC_GAIN, _SFX_GAIN = 0.45, 0.8
+
+
+def _cue_placed(project: Project, cue_id: str) -> bool:
+    return any(c.cue_id == cue_id for t in project.tracks if t.kind == "audio" for c in t.clips)
+
+
+def _place_sound_candidate(project: Project, cue: SoundCue, cand: SoundCandidate) -> None:
+    """Place one sound candidate onto the Music or SFX track (by cue.kind), replacing whatever
+    filled this cue. Starts at the cue's beat boundary (v1 alignment); align_offset nudges it."""
+    music, sfx = project.audio_tracks()
+    track = music if cue.kind == "music" else sfx
+    for t in (music, sfx):                       # a cue lives on exactly one track
+        t.clips = [c for c in t.clips if c.cue_id != cue.id]
+    asset = project.assets.get(cand.asset_id)
+    span = max(cue.end - cue.start, 0.2)
+    so = min(asset.duration, span) if asset and asset.duration else span
+    clip = Clip(track_id=track.id, asset_id=cand.asset_id, cue_id=cue.id,
+                timeline_start=cue.start, timeline_end=cue.start + so,
+                source_in=0.0, source_out=so, duck=cue.duck,
+                gain=_MUSIC_GAIN if cue.kind == "music" else _SFX_GAIN)
+    if cue.kind == "music" and so >= 1.0:        # ease beds in/out so they don't pop
+        clip.effects.fade_in = min(1.0, so / 3)
+        clip.effects.fade_out = min(1.5, so / 3)
+    track.clips.append(clip)
+
+
+async def _apply_sound(pid: str, sug: SoundSuggestion, assets: list[MediaAsset], place: bool) -> None:
+    async with _apply_lock:
+        p = storage.load(pid)
+        for a in assets:
+            p.assets[a.id] = a
+        p.sound_suggestions[sug.cue_id] = sug
+        if place and sug.status == "ready" and sug.candidates:
+            cue = p.cue(sug.cue_id)
+            if cue:
+                _place_sound_candidate(p, cue, sug.candidates[sug.recommended_index])
+        storage.save(p)
+
+
+def _sound_emitter(pid: str, loop):
+    def ev(d: dict):
+        asyncio.run_coroutine_threadsafe(hub.send(pid, {"stage": "sound", **d}), loop)
+    return ev
+
+
+@app.post("/api/projects/{pid}/sound/plan")
+async def plan_sound(pid: str, body: SourceBody = SourceBody()):
+    """Run the Sound Director over the whole video → a sparse set of SoundCues. Async
+    (one LLM call); results arrive over the websocket. Clears prior cues + their clips."""
+    p = _load(pid)
+    if not p.beats:
+        raise HTTPException(400, "no beats yet; transcribe + segment first")
+    loop = asyncio.get_running_loop()
+
+    async def job():
+        try:
+            await hub.send(pid, {"stage": "sound", "status": "planning", "msg": "sound director…"})
+            cues = await asyncio.to_thread(sounddirection.plan_sound, p, body.notes)
+            async with _apply_lock:
+                fresh = storage.load(pid)
+                fresh.audio_tracks()                     # ensure Music + SFX exist
+                for t in fresh.tracks:                   # drop old cue-linked clips
+                    if t.kind == "audio":
+                        t.clips = [c for c in t.clips if not c.cue_id]
+                fresh.sound_cues = cues
+                fresh.sound_suggestions = {}
+                storage.save(fresh)
+            await hub.send(pid, {"stage": "sound_planned", "cues": len(cues)})
+        except Exception as e:
+            await hub.send(pid, {"stage": "error", "error": f"sound director: {type(e).__name__}: {e}"})
+
+    asyncio.create_task(job())
+    return {"status": "started"}
+
+
+async def _source_cue(pid: str, cue: SoundCue, loop, sem: asyncio.Semaphore) -> None:
+    ev = _sound_emitter(pid, loop)
+    async with sem:
+        p = storage.load(pid)
+        try:
+            sug, assets = await asyncio.to_thread(soundsourcing.source_cue, p, cue, ev)
+            await _apply_sound(pid, sug, assets, place=True)
+            await hub.send(pid, {"stage": "sound_done", "cue_id": cue.id,
+                                 "status": sug.status, "candidates": len(sug.candidates)})
+        except Exception as e:
+            await _apply_sound(pid, SoundSuggestion(cue_id=cue.id, status="error",
+                                                    error=f"{type(e).__name__}: {e}"), [], place=False)
+            await hub.send(pid, {"stage": "error", "cue_id": cue.id, "error": f"{type(e).__name__}: {e}"})
+
+
+@app.post("/api/projects/{pid}/cues/{cid}/source")
+async def source_one_cue(pid: str, cid: str):
+    p = _load(pid)
+    cue = p.cue(cid)
+    if not cue:
+        raise HTTPException(404, f"no cue {cid}")
+    p.sound_suggestions[cid] = SoundSuggestion(cue_id=cid, status="sourcing")
+    storage.save(p)
+    loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(config.SOURCE_CONCURRENCY)
+    asyncio.create_task(_source_cue(pid, cue, loop, sem))
+    return {"status": "started"}
+
+
+@app.post("/api/projects/{pid}/sound/source-all")
+async def sound_source_all(pid: str, body: SourceBody = SourceBody()):
+    """Plan (if no cues yet) then fetch audio for every cue that isn't already filled."""
+    p = _load(pid)
+    if not p.beats:
+        raise HTTPException(400, "no beats yet; transcribe + segment first")
+    loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(config.SOURCE_CONCURRENCY)
+
+    async def job():
+        try:
+            proj = storage.load(pid)
+            if not proj.sound_cues:
+                await hub.send(pid, {"stage": "sound", "status": "planning", "msg": "sound director…"})
+                cues = await asyncio.to_thread(sounddirection.plan_sound, proj, body.notes)
+                async with _apply_lock:
+                    fresh = storage.load(pid)
+                    fresh.audio_tracks()
+                    for t in fresh.tracks:
+                        if t.kind == "audio":
+                            t.clips = [c for c in t.clips if not c.cue_id]
+                    fresh.sound_cues = cues
+                    fresh.sound_suggestions = {}
+                    storage.save(fresh)
+                await hub.send(pid, {"stage": "sound_planned", "cues": len(cues)})
+                proj = storage.load(pid)
+            targets = [c for c in proj.sound_cues if not _cue_placed(proj, c.id)]
+            for c in targets:
+                proj.sound_suggestions[c.id] = SoundSuggestion(cue_id=c.id, status="sourcing")
+            storage.save(proj)
+            await hub.send(pid, {"stage": "sound_all_start", "count": len(targets)})
+            await asyncio.gather(*[_source_cue(pid, c, loop, sem) for c in targets])
+            await hub.send(pid, {"stage": "sound_all_done"})
+        except Exception as e:
+            await hub.send(pid, {"stage": "error", "error": f"{type(e).__name__}: {e}"})
+
+    asyncio.create_task(job())
+    return {"status": "started"}
+
+
+@app.post("/api/projects/{pid}/cues/{cid}/accept")
+def accept_sound_candidate(pid: str, cid: str, body: AcceptBody):
+    p = _load(pid)
+    sug = p.sound_suggestions.get(cid)
+    if not sug or not sug.candidates:
+        raise HTTPException(404, "no sound suggestions for this cue")
+    if not (0 <= body.candidate_index < len(sug.candidates)):
+        raise HTTPException(400, "candidate_index out of range")
+    sug.recommended_index = body.candidate_index
+    cue = p.cue(cid)
+    _place_sound_candidate(p, cue, sug.candidates[body.candidate_index])
+    storage.save(p)
+    return p
+
+
+class SoundUrlBody(BaseModel):
+    url: str
+
+
+@app.post("/api/projects/{pid}/cues/{cid}/capture")
+async def capture_sound_url(pid: str, cid: str, body: SoundUrlBody):
+    """Paste a YouTube URL for a cue: pull its audio at the ?t= timestamp as a candidate."""
+    p = _load(pid)
+    cue = p.cue(cid)
+    if not cue:
+        raise HTTPException(404, f"no cue {cid}")
+    if not youtube.parse_youtube_url(body.url):
+        raise HTTPException(400, "not a YouTube URL")
+    p.sound_suggestions[cid] = SoundSuggestion(cue_id=cid, status="sourcing",
+                                               candidates=(p.sound_suggestions.get(cid).candidates
+                                                           if p.sound_suggestions.get(cid) else []))
+    storage.save(p)
+    loop = asyncio.get_running_loop()
+
+    async def job():
+        ev = _sound_emitter(pid, loop)
+        try:
+            sug, assets = await asyncio.to_thread(soundsourcing.capture_sound_url, p, cue, body.url, ev)
+            await _apply_sound(pid, sug, assets, place=True)
+            await hub.send(pid, {"stage": "sound_done", "cue_id": cid,
+                                 "status": sug.status, "candidates": len(sug.candidates)})
+        except Exception as e:
+            prev = p.sound_suggestions.get(cid)
+            await _apply_sound(pid, SoundSuggestion(cue_id=cid, status="error",
+                                                    candidates=(prev.candidates if prev else []),
+                                                    error=f"{type(e).__name__}: {e}"), [], place=False)
+            await hub.send(pid, {"stage": "error", "cue_id": cid, "error": f"{type(e).__name__}: {e}"})
+
+    asyncio.create_task(job())
+    return {"status": "started"}

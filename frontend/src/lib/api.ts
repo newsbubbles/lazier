@@ -115,5 +115,33 @@ export const api = {
       j<{ video: string; caption_url: string; hook: string; social_caption: string;
           start: number; end: number; duration: number }>),
 
+  // --- sound design ---
+  planSound: (id: string, notes = "") =>
+    fetch(`/api/projects/${id}/sound/plan`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes }),
+    }).then(j<{ status: string }>),
+
+  soundSourceAll: (id: string, notes = "") =>
+    fetch(`/api/projects/${id}/sound/source-all`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes }),
+    }).then(j<{ status: string }>),
+
+  sourceCue: (id: string, cid: string) =>
+    fetch(`/api/projects/${id}/cues/${cid}/source`, { method: "POST" }).then(j),
+
+  acceptSoundCandidate: (id: string, cid: string, candidate_index: number) =>
+    fetch(`/api/projects/${id}/cues/${cid}/accept`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidate_index }),
+    }).then(j<Project>),
+
+  captureSoundUrl: (id: string, cid: string, url: string) =>
+    fetch(`/api/projects/${id}/cues/${cid}/capture`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    }).then(j),
+
   fileUrl: (id: string, rel: string) => `/files/${id}/${rel}`,
 };
