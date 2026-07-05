@@ -15,13 +15,13 @@ Jamendo + FMA (music), **yt-dlp audio** (soundbites). Locked decisions:
 3. **Beat-boundary alignment for v1** + a per-clip **manual start-offset** control in the
    sound clip's drawer. Full details + agent pipeline + data model + UI in notes/13.
 
-## Uncommitted local work (Nate's, on disk — decide before building sound)
+## Audio state (all committed; tree is clean)
 - **voice_enhance** podcast vocal chain (`config.VOICE_CHAIN`/`AUDIO_LUFS`, applied in
-  `render.py` when `project.voice_enhance`; a checkbox in UI, OFF by default). Nate A/B'd it,
-  didn't love the result (denoiser/loudnorm artifacts), leaving it opt-off. Also a `_kind_for`
-  fix (trust image extension so uploads aren't miscalled "video"). PLUS my **`-ar 48000` pin**
-  on both render audio outputs (loudnorm was upsampling to 96k). These are UNCOMMITTED in
-  render.py/config.py/main.py + some frontend — commit or discard per Nate before the sound spike.
+  `render.py` when `project.voice_enhance`; UI checkbox, OFF by default) — committed `5bf5335`.
+  Nate A/B'd it, didn't love the result (afftdn denoiser + single-pass loudnorm artifacts),
+  so it stays opt-off. If revisited: soften/remove `afftdn`, make loudnorm two-pass/linear.
+- `_kind_for` fix (trust image extension so uploads aren't miscalled "video") — committed.
+- **`-ar 48000` pin** on both render audio outputs (loudnorm was upsampling to 96k) — committed `c4cf21c`.
 
 ## What lazier is
 Audio-driven, mostly-autonomous video editor at `D:\lazier`. Drop in audio → local Whisper
