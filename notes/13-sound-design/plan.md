@@ -19,7 +19,7 @@ protagonist**.
 ## Where to fetch sounds (the gap Nate flagged — researched)
 - **SFX → Freesound API v2** (best fit). Huge CC library, filterable by license (incl. **CC0**,
   no attribution), free API key, official Python client, returns audio + analysis. Track the
-  per-sound license on the asset; prefer CC0, allow CC-BY with attribution.
+  per-sound license on the asset; the license FILTER follows `project.rights_posture` (see Decisions).
 - **Music → Pixabay Audio API** (primary): free for commercial use, **no attribution**,
   RESTful, 100 req/min. Alternates: **Jamendo** (600k tracks, CC/licensing API) and **Free
   Music Archive** (150k CC tracks).
@@ -84,12 +84,12 @@ plausible peaks and we want it to pick. Also set fade in/out, gain, and duck.
 - Pin audio out at 48k (already done).
 
 ## UI (mirror the video panel)
-- A **sound track row** on the timeline under the beats row, showing the director's SoundCues
-  (music vs effect color-coded), with a waveform on placed clips.
+- **Two sound track rows** (music + SFX) under the beats row, rendered at **reduced height**
+  (so mobile still fits), music/effect color-coded, waveform on placed clips.
 - Click a cue → a **SoundPanel** (~ SuggestionPanel): candidates with waveform + play-preview,
-  **Find sounds** (with per-cue guidance), **upload / paste URL / YouTube**, and edit controls
-  (gain, duck on/off, fade, nudge alignment). Multiple choices per cue; not every cue must be
-  filled.
+  **Find sounds** (with per-cue guidance), **upload / paste URL / YouTube**, and per-clip edit
+  controls: gain, duck on/off, fade, and a **start-offset field** (manual fine alignment,
+  seconds). Multiple choices per cue; not every cue must be filled.
 - A toggle on a video clip to **enable its audio** (diegetic), with a level.
 
 ## Nate's requirements → covered
@@ -98,17 +98,21 @@ paste-URL/upload/YT/refetch per sound ✓ · multiple choices per area ✓ · no
 · climax alignment to beats/words ✓ · diegetic video audio (interview) ✓ · voice stays
 protagonist ✓.
 
-## Open questions / decisions
-- **Music vs SFX on one track or two?** Recommend **two audio tracks** (music bed + sfx hits)
-  so ducking + levels differ; render already loops tracks.
-- **Ducking model**: duck music under voice always; SFX stingers can punch briefly without
-  ducking. Per-cue `duck` flag.
-- **Alignment precision**: onset/peak detect is easy; the hard part is the director choosing a
-  *good* anchor word. Start with beat-boundary anchors, refine to word-level.
-- **Licensing default**: CC0-only for zero-friction, or allow CC-BY + auto `credits.txt`?
-  Recommend allow CC-BY with the credits artifact.
-- **Fit check for audio**: do we need a "does this sound match the brief" judge, or trust the
-  search + Nate's ear? Probably skip a heavy verify for v1 (audio is fast to audition).
+## Decisions (locked 2026-07-05)
+1. **Two audio tracks** (music bed + SFX hits) so levels/ducking differ. On the timeline both
+   render at **reduced height** vs the visual/beats rows so the **mobile layout still fits**.
+2. **Licensing follows the project's `rights_posture`** (the existing anything_goes /
+   commercial_safe set at project creation) — the SAME gate video sourcing already uses. The
+   sound fetcher filters license by that setting: `anything_goes` = allow CC-BY + YT/uncleared
+   (emit `credits.txt`); `commercial_safe` = CC0 / no-attribution royalty-free only. No
+   separate audio licensing switch.
+3. **Anchor = beat-boundary alignment for v1.** Each placed sound clip's right drawer also has
+   a **manual start-offset** control (nudge in seconds) for fine hand-alignment — same idea as
+   trimming a video clip. Word-level auto-anchor is a later refinement.
+
+Still open (fine to defer): ducking model (music always ducks under voice; SFX stingers can
+punch briefly without ducking — per-cue `duck` flag); whether audio needs a "matches the
+brief" judge (v1: skip it, audition by ear).
 
 ## Effort / sequencing (spike)
 1. Quiet-moment map + Sound Director agent (cues) — the brain.

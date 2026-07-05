@@ -1,6 +1,27 @@
-# lazier — HANDOFF (2026-07-03)
+# lazier — HANDOFF (2026-07-05)
 
-Resume point after a long build session. Read this + `notes/` (00→12) to continue.
+Resume point after a long build session. Read this + `notes/` (00→13) to continue.
+
+## >>> NEXT TASK: SOUND DESIGN spike (notes/13-sound-design/plan.md) — decisions LOCKED
+Add music + SFX via a **Sound Director** agent + fetch + deterministic climax alignment, on a
+new audio track. Voice spine stays the protagonist. Render already has positioned audio clips
++ sidechain ducking, and projects already carry a "Music" audio track — foundation is half
+there. Fetch sources (researched): **Freesound API** (SFX, CC/CC0), **Pixabay Audio API** +
+Jamendo + FMA (music), **yt-dlp audio** (soundbites). Locked decisions:
+1. **Two audio tracks** (music + SFX), rendered at REDUCED row height so mobile fits.
+2. **Licensing follows `project.rights_posture`** (anything_goes vs commercial_safe) — same
+   gate video sourcing uses; anything_goes allows CC-BY + emits `credits.txt`, commercial_safe
+   = CC0/royalty-free only.
+3. **Beat-boundary alignment for v1** + a per-clip **manual start-offset** control in the
+   sound clip's drawer. Full details + agent pipeline + data model + UI in notes/13.
+
+## Uncommitted local work (Nate's, on disk — decide before building sound)
+- **voice_enhance** podcast vocal chain (`config.VOICE_CHAIN`/`AUDIO_LUFS`, applied in
+  `render.py` when `project.voice_enhance`; a checkbox in UI, OFF by default). Nate A/B'd it,
+  didn't love the result (denoiser/loudnorm artifacts), leaving it opt-off. Also a `_kind_for`
+  fix (trust image extension so uploads aren't miscalled "video"). PLUS my **`-ar 48000` pin**
+  on both render audio outputs (loudnorm was upsampling to 96k). These are UNCOMMITTED in
+  render.py/config.py/main.py + some frontend — commit or discard per Nate before the sound spike.
 
 ## What lazier is
 Audio-driven, mostly-autonomous video editor at `D:\lazier`. Drop in audio → local Whisper
@@ -57,7 +78,7 @@ Owner: Nate (newsbubbles, @natecodesai on YT).
 00-intake · 01-architecture · 02-agents · 05-ideas · 06-direction · 07-inspector ·
 08-roadmap · **09-web-capture** (hardening: blacklist/consent/login/dwell) · **10-incremental-proxy**
 (per-beat tile cache — the real "instant preview" fix) · **11-manual-sourcing** (paste URL/upload/guidance) ·
-**12-shorts** (the shorts plan).
+**12-shorts** (the shorts plan) · **13-sound-design** (music/SFX spike — decisions locked, NEXT).
 
 ## Likely NEXT (Nate's call)
 - **Incremental proxy tiling** (notes/10): render per-beat tiles keyed by content hash, concat → editing one beat re-renders in seconds, not the whole 2-min pass. Biggest iteration-speed win.
