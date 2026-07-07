@@ -107,14 +107,18 @@ SHORTS_MIN_SECONDS = float(os.environ.get("LAZIER_SHORTS_MIN", "15"))
 SHORTS_MAX_SECONDS = float(os.environ.get("LAZIER_SHORTS_MAX", "60"))
 SHORTS_MODEL = os.environ.get("LAZIER_SHORTS_MODEL", DIRECTOR_MODEL)
 
-# podcast vocal chain — applied to the voice spine at render when project.voice_enhance.
-# One ffmpeg -af graph: HPF -> denoise -> de-ess -> EQ -> compressor -> loudnorm -> limiter.
+# Vocal chain — applied to the voice spine at render when project.voice_enhance. This is the
+# "Clarity" preset Nate picked from the A/B test, tuned for a WARM/DARK voice (energy in
+# 120-1k, weak natural presence): rumble filter -> a gentle presence lift at 2.8k for
+# intelligibility + a touch of air -> light de-ess -> gentle compression -> loudnorm -> limiter.
+# Deliberately NO low-mid cut and NO aggressive denoise/high boost — those made it tinny.
 AUDIO_LUFS = float(os.environ.get("LAZIER_AUDIO_LUFS", "-14"))   # YouTube/shorts target
 _DEFAULT_VOICE_CHAIN = (
-    "highpass=f=85,afftdn=nr=12:nf=-25,deesser=i=0.35,"
-    "equalizer=f=250:t=q:w=1.0:g=-3,equalizer=f=4000:t=q:w=1.5:g=3,highshelf=f=10000:g=2,"
-    "acompressor=threshold=-18dB:ratio=3:attack=15:release=160:makeup=5,"
-    f"loudnorm=I={AUDIO_LUFS}:TP=-1:LRA=11,alimiter=limit=0.95")
+    "highpass=f=80,"
+    "equalizer=f=2800:t=q:w=1.6:g=2.5,highshelf=f=11000:g=1.5,"
+    "deesser=i=0.2,"
+    "acompressor=threshold=-20dB:ratio=2.5:attack=20:release=180:makeup=3,"
+    f"loudnorm=I={AUDIO_LUFS}:TP=-1.5:LRA=10,alimiter=limit=0.96")
 VOICE_CHAIN = os.environ.get("LAZIER_VOICE_CHAIN", _DEFAULT_VOICE_CHAIN)
 
 # --- canvas presets ----------------------------------------------------------

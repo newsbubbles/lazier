@@ -95,6 +95,10 @@ def _fit(w: int, h: int) -> str:
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1")
 
 
+def _is_gif(asset: MediaAsset) -> bool:
+    return asset.local_path.lower().endswith(".gif")
+
+
 def _build_command(project: Project, out_path: Path, height: int | None) -> list[str]:
     audio_asset = project.audio_asset()
     if not audio_asset:
@@ -136,9 +140,14 @@ def _build_command(project: Project, out_path: Path, height: int | None) -> list
             diegetic.append((idx, c))   # this video's :a joins the mix (interview soundbite)
 
         if asset.kind == "image":
-            inputs += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
+            gif = _is_gif(asset)
+            if gif:   # the gif demuxer rejects -loop; -ignore_loop 0 loops the animation to fill the clip
+                inputs += ["-ignore_loop", "0", "-t", f"{dur:.3f}", "-i", path]
+            else:
+                inputs += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
+            # _fit scales to fill one dimension (letterbox the other) — gifs cover like stills/videos
             chain = f"[{idx}:v]{_fit(W, H)}"
-            if c.transforms.ken_burns:
+            if c.transforms.ken_burns and not gif:   # zoompan would freeze a gif on its first frame
                 chain += (f",zoompan=z='min(zoom+0.0006,1.15)':d={max(int(dur*fps_val),1)}:"
                           f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={fps_val}")
             chain += f",setpts=PTS-STARTPTS+{start:.3f}/TB"
@@ -335,9 +344,13 @@ def _build_short_command(project: Project, out_path: Path, ass_name: str,
         dur = max(end - start, 0.04)
         lbl = f"v{idx}"
         if asset.kind == "image":
-            inputs += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
-            chain = f"[{idx}:v]{_reframe(asset.origin, W, H)}"
-            if c.transforms.ken_burns:
+            gif = _is_gif(asset)
+            if gif:   # gif demuxer rejects -loop; -ignore_loop 0 loops the animation to fill the clip
+                inputs += ["-ignore_loop", "0", "-t", f"{dur:.3f}", "-i", path]
+            else:
+                inputs += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
+            chain = f"[{idx}:v]{_reframe(asset.origin, W, H)}"   # scale-cover + crop, same as stills
+            if c.transforms.ken_burns and not gif:   # zoompan would freeze a gif on its first frame
                 chain += (f",zoompan=z='min(zoom+0.0006,1.15)':d={max(int(dur*fps),1)}:"
                           f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={fps}")
             chain += f",setpts=PTS-STARTPTS+{start:.3f}/TB"

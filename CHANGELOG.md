@@ -16,10 +16,25 @@ Work accumulates under **Unreleased** and is cut into a version when tagged.
   keyed. Music + SFX get their own reduced-height timeline rows and a **SoundPanel** (waveform
   audition, Find sounds, paste-URL, per-clip level / duck / timing-nudge). Render mixes the
   extra tracks with per-clip gain, fades, align-offset, and optional **diegetic video audio**.
+- **Animated GIF support.** GIFs drop into the timeline and render animated — looped to fill
+  the beat, ken-burns auto-skipped so they don't freeze — in both the export and shorts paths.
+  (Previously a GIF errored the whole render, since images used `-loop 1`, which ffmpeg rejects
+  for the gif demuxer.)
 - Spacebar toggles timeline play/pause (ignored while typing in a text field).
 - Editor screenshot in the README.
 
+### Changed
+- **Voice-enhance retuned to "Clarity".** The old chain cut low-mid warmth and boosted 4k/10k,
+  which made a warm/dark voice sound tinny, plus heavy denoise artifacts. The new default keeps
+  the natural warmth and adds only a gentle 2.8k presence lift, a touch of air, light de-ess,
+  gentle compression, and loudnorm. Picked by ear from an 8-preset A/B. Env-overridable via
+  `LAZIER_VOICE_CHAIN`.
+
 ### Fixed
+- **yt-dlp clip fetch** no longer hangs for minutes or fails on throttled videos: a fast
+  `--download-sections` grab first (hard-capped at 25s via a real process-tree kill that reaps
+  the ffmpeg child), then a full-download-and-trim fallback when YouTube throttles the ranged
+  request.
 - Preview playback was silent for placed music/SFX: the editor played the voice-only master
   through the waveform while the proxy video (which holds the full mix) was muted. Now a
   rendered proxy plays its own audio and the waveform is muted, so the preview matches the
