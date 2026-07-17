@@ -62,7 +62,7 @@ class Beat(BaseModel):
 AssetKind = Literal["video", "image", "audio"]
 AssetOrigin = Literal["upload", "pool", "youtube", "web", "pexels", "pixabay", "openverse",
                       "internet_archive", "mixkit", "imgflip", "coverr", "giphy",
-                      "reddit", "imgur", "fal"]
+                      "reddit", "imgur", "fal", "lucy"]
 
 
 class MediaAsset(BaseModel):

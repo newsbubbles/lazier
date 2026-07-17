@@ -62,8 +62,12 @@ _DIRECTOR_SYS = (
     "article/tweet/paper; data=a chart/number; metaphor=a visual analogy (e.g. a carnival "
     "strength-tester bell shattering = prices exploding); reaction=a meme/cartoon reaction; "
     "archival=old footage; ambient=mood b-roll; motif=a recurring callback.\n"
-    "- content_type: 'web' for evidence/data (we scroll-capture the actual page), else "
-    "'youtube' (for literal, metaphor, reaction, archival, ambient). Only these two for now.\n"
+    "- content_type: 'web' for evidence/data (we scroll-capture the actual page), 'youtube' for "
+    "literal/metaphor/reaction/archival/ambient (the DEFAULT), or — RARELY — 'lucy' for a bespoke "
+    "ANIMATED EXPLAINER generated from scratch (a chart, a framework/process diagram, a data viz) "
+    "ONLY when no stock clip could show the idea. Use 'lucy' at most once or twice in a whole "
+    "video and never for anything youtube/web already covers; it's slow + generated, so default "
+    "away from it.\n"
     "- shot_brief: a concrete description of the SHOT to find (subjects, action, framing, "
     "mood). This is what the searcher and the verifier judge against, so make it visual and "
     "specific, not a paraphrase of the words. Describe ONE single full-frame clip only — "
@@ -143,7 +147,7 @@ def direct_section(project: Project, section: Section, target_beat_ids: list[str
         b = beats[i]
         ct = d.content_type.strip().lower()
         reg = d.visual_register.strip()
-        if ct not in ("youtube", "web"):
+        if ct not in ("youtube", "web", "lucy"):
             ct = "web" if reg.lower() in ("evidence", "data") else "youtube"
         plans[b.id] = BeatPlan(
             visual_register=reg, content_type=ct, shot_brief=d.shot_brief.strip(),

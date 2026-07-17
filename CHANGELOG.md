@@ -9,6 +9,13 @@ Work accumulates under **Unreleased** and is cut into a version when tagged.
 ## [Unreleased]
 
 ### Added
+- **Lucy explainer clips.** A new `lucy` content type: a bespoke **animated explainer**
+  (motion-graphic chart / framework / concept diagram) generated on demand by the local Lucy
+  service (`D:\lucy`, :5190), whose server is started automatically if it isn't running. The
+  Visual Director may pick it (prompted to use it *rarely* — only when no stock clip can show
+  the idea), or you can prompt one per beat from the clip panel's **🎬 Make** box. The result is
+  normalized and lands as an additive candidate, and is allowed under any `rights_posture` since
+  it's self-generated motion graphics rather than uncleared footage.
 - **Sound design.** A **Sound Director** agent plans a sparse set of music beds + SFX cues
   over the whole video (tone-matched, ducked under the voice, aligned to beat boundaries),
   fed a deterministic quiet-moment map so swells land in the silences. Sourced via **yt-dlp

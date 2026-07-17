@@ -17,6 +17,7 @@ export function SuggestionPanel({
   const [url, setUrl] = useState("");
   const [beatNote, setBeatNote] = useState("");   // per-beat guidance for Find clips
   const [zoom, setZoom] = useState(true);          // slow-zoom uploaded stills
+  const [lucyPrompt, setLucyPrompt] = useState(""); // prompt for a generated explainer clip
   const [err, setErr] = useState("");
   const sug = project.suggestions?.[beat.id];
   const plan = sug?.plan;
@@ -35,6 +36,12 @@ export function SuggestionPanel({
     if (!url.trim()) return;
     await api.captureSite(project.id, beat.id, url.trim(), beat.text);
     setUrl(""); onChanged();
+  };
+  const makeLucy = async () => {
+    if (!lucyPrompt.trim()) return;
+    setErr("");
+    try { await api.makeLucy(project.id, beat.id, lucyPrompt.trim()); setLucyPrompt(""); onChanged(); }
+    catch (e: any) { setErr(e.message); }
   };
 
   const uploadOwn = async (f: File) => {
@@ -96,6 +103,18 @@ export function SuggestionPanel({
         A YouTube or direct video link is clipped at its timestamp (add <code>?t=</code>); an
         image link drops in with effects; any other page is scroll-captured. No search used.
         Added clips stack as candidates; nothing you placed is lost.
+      </div>
+
+      <div className="capture-row">
+        <input value={lucyPrompt} onChange={(e) => setLucyPrompt(e.target.value)}
+               placeholder="explainer prompt (Lucy): a chart, a diagram, a concept…"
+               onKeyDown={(e) => e.key === "Enter" && makeLucy()} />
+        <button onClick={makeLucy} disabled={busy || !lucyPrompt.trim()}>🎬 Make</button>
+      </div>
+      <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
+        Generates a bespoke <b>animated explainer</b> clip (motion graphics) for this beat.
+        Slow (~1-2 min) and starts the Lucy service on demand. Best for a chart / framework /
+        concept no stock clip can show.
       </div>
       {err && <div className="err" style={{ fontSize: 11, marginBottom: 4 }}>{err}</div>}
 

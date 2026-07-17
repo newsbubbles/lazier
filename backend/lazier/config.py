@@ -82,6 +82,11 @@ SOURCE_MAX_HEIGHT = int(os.environ.get("LAZIER_SOURCE_MAX_HEIGHT", "1080"))
 SOURCE_FALLBACK_HEIGHT = int(os.environ.get("LAZIER_SOURCE_FALLBACK_HEIGHT", "720"))
 SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
 FAL_KEY = os.environ.get("FAL_KEY", "")
+# Lucy: the local animated-explainer service (D:\lucy, :5190). content_type='lucy' (used
+# sparingly by the director) or a manual per-beat "Make explainer" generates a motion-graphic
+# clip. We start its server on demand.
+LUCY_DIR = os.environ.get("LAZIER_LUCY_DIR", str(PROJECT_ROOT.parent / "lucy"))
+LUCY_URL = os.environ.get("LAZIER_LUCY_URL", "http://127.0.0.1:5190")
 # Per section: how many queries, how many clips to actually fetch+verify.
 SOURCE_MAX_QUERIES = int(os.environ.get("LAZIER_SOURCE_MAX_QUERIES", "2"))
 SOURCE_MAX_CANDIDATES = int(os.environ.get("LAZIER_SOURCE_MAX_CANDIDATES", "3"))

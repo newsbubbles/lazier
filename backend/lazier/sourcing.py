@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 
-from . import config, serper, storage, vision, webcapture, youtube
+from . import config, lucy, serper, storage, vision, webcapture, youtube
 from .media_probe import probe
 from .models import Beat, BeatPlan, Candidate, MediaAsset, Project, Suggestion
 
@@ -101,9 +101,48 @@ def _capture_candidate(project: Project, beat: Beat, url: str, title: str,
 
 
 # --- execute a plan ----------------------------------------------------------
+def source_lucy(project: Project, beat: Beat, plan: BeatPlan,
+                on_event: Optional[Event] = None) -> tuple[Suggestion, list[MediaAsset]]:
+    """Generate an animated explainer clip via Lucy and return it as the beat's candidate.
+    Lucy output is self-generated motion graphics, so it's allowed under any rights_posture."""
+    bid = beat.id
+    pdir = storage.project_dir(project.id)
+    clip_len = min(beat.end - beat.start, config.SOURCE_MAX_CLIP_SECONDS)
+    prompt = (plan.shot_brief or beat.text).strip()
+    _emit(on_event, beat_id=bid, msg=f"[lucy] {prompt[:50]}")
+    asset = MediaAsset(kind="video", origin="lucy", name=f"Lucy: {prompt[:40]}", license="generated")
+    clip_rel = f"media/sourced/{asset.id}.mp4"
+    try:
+        mp4 = lucy.make_clip(prompt, aspect=project.aspect_ratio, seconds=clip_len,
+                             fps=project.fps, on_event=lambda d: _emit(on_event, beat_id=bid, **d))
+    except youtube.SourcingError as e:
+        return Suggestion(beat_id=bid, status="error", plan=plan, error=f"lucy: {e.reason}"), []
+    # normalize Lucy's mp4 into the project (h264/yuv420p/30fps) for clean compositing
+    res = subprocess.run(
+        [config.FFMPEG, "-y", "-i", str(mp4), "-t", f"{clip_len:.2f}", "-r", "30",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", "-preset", "veryfast", "-crf", "20",
+         str(pdir / clip_rel)], capture_output=True, text=True)
+    if res.returncode != 0 or not (pdir / clip_rel).exists():
+        tail = " ".join((res.stderr or "").strip().splitlines()[-2:])[:150]
+        return Suggestion(beat_id=bid, status="error", plan=plan,
+                          error=f"lucy normalize failed: {tail}"), []
+    info = probe(pdir / clip_rel)
+    frames = vision.sample_frames(pdir / clip_rel, pdir / "media/frames", n=1)
+    asset.local_path, asset.duration = clip_rel, clip_len
+    asset.width, asset.height, asset.verify_score = info["width"], info["height"], 0.9
+    thumb = f"media/frames/{frames[0].name}" if frames else ""
+    cand = Candidate(asset_id=asset.id, source="lucy", title=asset.name,
+                     rationale="generated animated explainer", fit_score=0.9,
+                     thumb=thumb, flags=["generated"])
+    return Suggestion(beat_id=bid, status="ready", plan=plan, candidates=[cand],
+                      recommended_index=0), [asset]
+
+
 def source_from_plan(project: Project, beat: Beat, plan: BeatPlan,
                      on_event: Optional[Event] = None) -> tuple[Suggestion, list[MediaAsset]]:
     bid = beat.id
+    if plan.content_type == "lucy":   # generated motion graphics — allowed under any rights posture
+        return source_lucy(project, beat, plan, on_event)
     if project.rights_posture == "commercial_safe":
         return (Suggestion(beat_id=bid, status="error", plan=plan,
                            error="commercial_safe: YouTube/web are uncleared and no stock "

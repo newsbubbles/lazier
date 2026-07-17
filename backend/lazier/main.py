@@ -679,6 +679,50 @@ def accept_candidate(pid: str, bid: str, body: AcceptBody):
     return p
 
 
+class LucyBody(BaseModel):
+    prompt: str
+
+
+@app.post("/api/projects/{pid}/beats/{bid}/lucy")
+async def make_lucy(pid: str, bid: str, body: LucyBody):
+    """Generate an animated explainer clip (Lucy) for this beat from a prompt. Additive
+    candidate, like a URL paste. Starts Lucy's server on demand."""
+    p = _load(pid)
+    beat = p.beat(bid)
+    if not beat:
+        raise HTTPException(404, f"no beat {bid}")
+    if not body.prompt.strip():
+        raise HTTPException(400, "prompt is required")
+    prev = p.suggestions.get(bid)
+    p.suggestions[bid] = Suggestion(beat_id=bid, status="sourcing",
+                                    candidates=(prev.candidates if prev else []))
+    storage.save(p)
+    loop = asyncio.get_running_loop()
+
+    async def job():
+        ev = _emitter(pid, loop)
+        try:
+            plan = BeatPlan(visual_register="motif", content_type="lucy",
+                            shot_brief=body.prompt.strip())
+            sug, assets = await asyncio.to_thread(sourcing.source_lucy, p, beat, plan, ev)
+            # keep any earlier candidates alongside the generated one (additive)
+            if sug.status == "ready" and prev and prev.candidates:
+                sug.candidates = sug.candidates + [c for c in prev.candidates
+                                                   if c.asset_id != sug.candidates[0].asset_id]
+            await _apply(pid, sug, assets, place=True)
+            await hub.send(pid, {"stage": "source_done", "beat_id": bid,
+                                 "status": sug.status, "candidates": len(sug.candidates)})
+        except Exception as e:
+            pv = p.suggestions.get(bid)
+            await _apply(pid, Suggestion(beat_id=bid, status="error",
+                                         candidates=(pv.candidates if pv else []),
+                                         error=f"{type(e).__name__}: {e}"), [], place=False)
+            await hub.send(pid, {"stage": "error", "beat_id": bid, "error": f"{type(e).__name__}: {e}"})
+
+    asyncio.create_task(job())
+    return {"status": "started"}
+
+
 # --- sound design (music + SFX cues on the audio tracks) ---------------------
 # Default placement gains: a music bed sits well under the voice; an SFX one-shot a bit louder.
 _MUSIC_GAIN, _SFX_GAIN = 0.45, 0.8

@@ -95,6 +95,12 @@ export const api = {
       body: JSON.stringify({ candidate_index }),
     }).then(j<Project>),
 
+  makeLucy: (id: string, bid: string, prompt: string) =>
+    fetch(`/api/projects/${id}/beats/${bid}/lucy`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    }).then(j),
+
   renderProxy: (id: string) =>
     fetch(`/api/projects/${id}/render/proxy`, { method: "POST" }).then(j<{ url: string }>),
 

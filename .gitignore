@@ -18,3 +18,4 @@ workspace/
 
 # uvicorn runtime logs (Start-Process detached backend)
 .uvicorn*.log
+.vite*.log
